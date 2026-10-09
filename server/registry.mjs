@@ -9,6 +9,7 @@ import {
 } from "./native-adapters.mjs";
 import { A2AAdapter, discoverA2A } from "./a2a-adapter.mjs";
 import { ApiAdapter, discoverApi } from "./api-adapter.mjs";
+import { validateCapacity } from "./context.mjs";
 
 export class AgentRegistry {
   constructor(store, root) {
@@ -71,13 +72,25 @@ export class AgentRegistry {
       Array.isArray(parameters)
     )
       throw new Error("模型参数无效。");
-    resolveModel(provider, { ...input, parameters });
+    const resolved = resolveModel(provider, { ...input, parameters });
+    const capacity = validateCapacity(input.capacity);
+    const output = Math.max(
+      resolved.parameters.outputTokens ?? 0,
+      capacity.outputReserve ?? resolved.parameters.outputTokens ?? 4096,
+    );
+    if (
+      capacity.windowTokens &&
+      capacity.windowTokens <=
+        output + (capacity.extraReserve ?? 0) + (capacity.safetyReserve ?? 512)
+    )
+      throw new Error("模型窗口必须大于输出、额外预留和安全余量的总和。");
     return {
       providerId: provider.id,
       model: input.model,
       parameters,
       name: input.name.trim(),
       petId: typeof input.petId === "string" ? input.petId : null,
+      capacity,
     };
   }
   async driver(member, conversation) {
@@ -118,6 +131,15 @@ export class AgentRegistry {
           : new classes[provider.kind](cwd, options);
     this.drivers.set(member.id, { driver, fingerprint });
     return driver;
+  }
+  capacity(member) {
+    const provider = this.provider(member.providerId);
+    if (!provider) return {};
+    const model = provider.models.find((m) => m.id === member.model);
+    return {
+      ...model?.capacity,
+      actualOutputLimit: resolveModel(provider, member).parameters.outputTokens,
+    };
   }
   closeMember(id) {
     this.drivers.get(id)?.driver.close();

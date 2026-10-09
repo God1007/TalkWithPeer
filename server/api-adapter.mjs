@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { validateAgentUrl } from "./a2a-adapter.mjs";
 import { API_PRESETS as presets } from "../shared/api-presets.mjs";
+import { AGENT_INSTRUCTIONS } from "../shared/agent-instructions.mjs";
 
 function credentialFile(provider, credentialRoot) {
   if (
@@ -68,10 +69,28 @@ async function request(
     signal: signal ?? AbortSignal.timeout(30000),
   });
   // Provider error bodies can echo credentials or private prompts.
-  if (!response.ok)
-    throw new Error(
-      provider.name + " 请求失败（HTTP " + response.status + "）。",
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    const category =
+      String(body?.error?.code ?? "") +
+      " " +
+      String(body?.error?.message ?? body?.message ?? "");
+    const code =
+      /context_length|context.*(?:limit|exceed|maximum)|too many tokens|maximum context/i.test(
+        category,
+      )
+        ? "context_overflow"
+        : "api_error";
+    throw Object.assign(
+      new Error(
+        provider.name +
+          (code === "context_overflow"
+            ? " 上下文超过模型窗口。"
+            : " 请求失败（HTTP " + response.status + "）。"),
+      ),
+      { code, httpStatus: response.status },
     );
+  }
   try {
     return await response.json();
   } catch {
@@ -145,6 +164,12 @@ export async function discoverApi(input, { credentialRoot } = {}) {
           default: 4096,
         },
       ],
+      capacity:
+        Number.isInteger(m.context_window) &&
+        m.context_window >= 1024 &&
+        m.context_window <= 4000000
+          ? { windowTokens: m.context_window }
+          : {},
     }));
   if (!provider.models.length) throw new Error("API 模型列表无效。");
   if (key) {
@@ -162,6 +187,38 @@ export class ApiAdapter {
     this.options = options;
     this.sessionId = null;
   }
+  async countTokens(prompt, signal) {
+    if (this.provider.protocol === "chat") return null;
+    const endpoint =
+      this.provider.protocol === "messages"
+        ? "/messages/count_tokens"
+        : "/responses/input_tokens";
+    const body =
+      this.provider.protocol === "messages"
+        ? {
+            model: this.options.model,
+            system: AGENT_INSTRUCTIONS,
+            messages: [{ role: "user", content: prompt }],
+          }
+        : {
+            model: this.options.model,
+            input: prompt,
+            instructions: AGENT_INSTRUCTIONS,
+          };
+    try {
+      const result = await request(this.provider, endpoint, {
+        body,
+        credentialRoot: this.options.credentialRoot,
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
+          : AbortSignal.timeout(15000),
+      });
+      return Number.isInteger(result.input_tokens) ? result.input_tokens : null;
+    } catch (error) {
+      if ([404, 405, 501].includes(error.httpStatus)) return null;
+      throw error;
+    }
+  }
   async run(prompt, _delta, activity, signal) {
     const { model, parameters } = this.options;
     const limit = parameters.outputTokens ?? 4096;
@@ -174,10 +231,19 @@ export class ApiAdapter {
       result = await request(this.provider, "/responses", {
         credentialRoot: this.options.credentialRoot,
         signal,
-        body: { model, input: prompt, store: false, max_output_tokens: limit },
+        body: {
+          model,
+          input: prompt,
+          instructions: AGENT_INSTRUCTIONS,
+          store: false,
+          max_output_tokens: limit,
+        },
       });
       if (result.status !== "completed")
-        throw new Error("模型未完整完成回答，请调整输出上限后重试。");
+        throw Object.assign(
+          new Error("模型未完整完成回答，请调整输出上限后重试。"),
+          { code: "output_limit" },
+        );
       text = (result.output ?? [])
         .flatMap((o) => o.content ?? [])
         .filter((c) => c.type === "output_text")
@@ -190,11 +256,15 @@ export class ApiAdapter {
         body: {
           model,
           max_tokens: limit,
+          system: AGENT_INSTRUCTIONS,
           messages: [{ role: "user", content: prompt }],
         },
       });
       if (!["end_turn", "stop_sequence"].includes(result.stop_reason))
-        throw new Error("模型未完整完成回答，请调整输出上限后重试。");
+        throw Object.assign(
+          new Error("模型未完整完成回答，请调整输出上限后重试。"),
+          { code: "output_limit" },
+        );
       text = (result.content ?? [])
         .filter((c) => c.type === "text")
         .map((c) => c.text)
@@ -206,12 +276,18 @@ export class ApiAdapter {
         body: {
           model,
           max_tokens: limit,
-          messages: [{ role: "user", content: prompt }],
+          messages: [
+            { role: "system", content: AGENT_INSTRUCTIONS },
+            { role: "user", content: prompt },
+          ],
           stream: false,
         },
       });
       if (result.choices?.[0]?.finish_reason !== "stop")
-        throw new Error("模型未完整完成回答，请调整输出上限后重试。");
+        throw Object.assign(
+          new Error("模型未完整完成回答，请调整输出上限后重试。"),
+          { code: "output_limit" },
+        );
       text = result.choices[0].message?.content;
     }
     if (typeof text !== "string" || !text.trim())
@@ -222,6 +298,15 @@ export class ApiAdapter {
       model: result.model ?? model,
       sessionId: this.sessionId,
       usage,
+    };
+  }
+  inputMetadata() {
+    return {
+      protocol: this.provider.protocol,
+      baseUrl: this.provider.baseUrl,
+      model: this.options.model,
+      parameters: this.options.parameters,
+      instructions: AGENT_INSTRUCTIONS,
     };
   }
   close() {}

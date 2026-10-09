@@ -1,6 +1,6 @@
 import http from "node:http";
 import { readFile, readdir, stat, realpath, mkdir } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -108,7 +108,7 @@ export async function createApp({
       .find((v) => v.startsWith("twp_session="))
       ?.slice(12);
     if (req.method === "GET" && url.pathname === "/api/health") {
-      json(res, 200, { app: "TalkWithPeer", version: "0.2.0" });
+      json(res, 200, { app: "TalkWithPeer", version: "0.3.0" });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/session") {
@@ -332,7 +332,7 @@ export async function createApp({
             for (const member of store.members(id)) {
               registry.closeMember(member.id);
               store.patchMember(member.id, {
-                localSession: null,
+                remoteSession: null,
                 lastSyncedMessageId: null,
                 syncedVersion: null,
               });
@@ -378,7 +378,15 @@ export async function createApp({
           }
           editable(id);
           if (req.method === "PATCH") {
-            const input = registry.validateMember({ ...member, ...body });
+            const input = registry.validateMember({
+              ...member,
+              ...body,
+              ...(body.model &&
+              body.model !== member.model &&
+              !Object.hasOwn(body, "capacity")
+                ? { capacity: {} }
+                : {}),
+            });
             if (input.petId && !pets.list().some((p) => p.id === input.petId))
               throw new Error("pet 不存在。");
             registry.closeMember(member.id);
@@ -399,6 +407,16 @@ export async function createApp({
           const snapshot = engine.snapshot(id, store.members(id));
           json(res, 200, {
             state: engine.context.state(id),
+            capacities: store.members(id).map((member) => ({
+              memberId: member.id,
+              name: member.name,
+              ...engine.context.capacity(
+                id,
+                member,
+                registry.capacity?.(member),
+              ),
+            })),
+            requests: store.requests(id),
             projection: engine.context.project(
               snapshot,
               url.searchParams.get("memberId"),
@@ -412,11 +430,42 @@ export async function createApp({
           if (Object.hasOwn(body, "budget")) patch.budget = body.budget;
           if (Object.hasOwn(body, "auto")) patch.auto = body.auto;
           json(res, 200, { state: engine.context.configure(id, patch) });
+          engine.update(id);
+          return;
+        }
+        if (pieces[3] === "task" && req.method === "PATCH") {
+          editable(id);
+          const task = engine.context.configureTask(id, {
+            goal: body.goal,
+            constraints: body.constraints,
+            rebase: body.rebase ?? false,
+          });
+          bump(id);
+          json(res, 200, { task });
+          return;
+        }
+        if (pieces[3] === "evidence" && req.method === "POST") {
+          json(res, 200, {
+            messages: engine.context.readEvidence(id, body.messageIds),
+          });
+          return;
+        }
+        if (pieces[3] === "requests" && pieces[4] && req.method === "GET") {
+          const record = store.request(pieces[4]);
+          if (!record || record.conversationId !== id) {
+            json(res, 404, { error: "请求记录不存在。" });
+            return;
+          }
+          json(res, 200, { request: record });
           return;
         }
         if (pieces[3] === "memo" && req.method === "POST") {
           editable(id);
-          const note = engine.context.addNote(id, body);
+          const note = engine.context.addNote(id, {
+            text: body.text,
+            memberId: body.memberId,
+            sourceIds: body.sourceIds,
+          });
           bump(id);
           json(res, 201, { note });
           return;
@@ -442,9 +491,21 @@ export async function createApp({
           if (!info.isFile() || info.size > 20000)
             throw new Error("仅支持不超过 20KB 的文本文件。");
           const bytes = await readFile(actual);
+          editable(id);
+          if (store.conversation(id).projectPath !== c.projectPath)
+            throw new Error("项目已经切换，请重新读取文件。");
+          if (bytes.length > 20000)
+            throw new Error("读取时文件大小已超过 20KB。");
           if (bytes.includes(0)) throw new Error("文件不是文本。");
           const note = engine.context.addNote(id, {
             text: "项目文件：" + body.path + "\n" + bytes.toString("utf8"),
+            material: {
+              kind: "project-file",
+              projectPath: c.projectPath,
+              path: path.relative(c.projectPath, actual),
+              hash: createHash("sha256").update(bytes).digest("hex"),
+              capturedAt: new Date().toISOString(),
+            },
           });
           bump(id);
           json(res, 201, { note });

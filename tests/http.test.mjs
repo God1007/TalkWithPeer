@@ -41,7 +41,9 @@ test("HTTP workspace validates access, saves configuration and runs the real eng
       return {
         sessionId: "session-" + member.id,
         async run(prompt) {
-          const candidateId = prompt.match(/"candidateId":"([^"]+)"/)?.[1];
+          const candidateId = prompt.includes("请提出独立观点")
+            ? undefined
+            : [...prompt.matchAll(/"candidateId":"([^"]+)"/g)].at(-1)?.[1];
           return {
             text: JSON.stringify(
               candidateId

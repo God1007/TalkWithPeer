@@ -23,6 +23,11 @@ export const commands = {
   read: "<项目内相对文件路径> 读取文件加入共享 memo",
   memo: "[list|add <内容>|agent <编号> <内容>|remove <memo编号>] 管理记忆",
   context: "[full|budget <数量>|auto <on|off>] 查看或配置平台上下文",
+  task: "[goal <内容>|constraints <内容;内容>|rebase] 查看目标与固定约束，或显式重设旧指令边界",
+  capacity:
+    "<编号> <windowTokens|outputReserve|extraReserve|safetyReserve> <数量|unknown> 设置成员容量",
+  recall: "<消息ID,...> 回取本会话公共原文",
+  inspect: "[请求ID] 查看请求清单或实际发送的输入",
   compact: "[参与者编号] 压缩早期轮次，保留原记录",
   show: "<messages|trace|result|all> 开启实时输出",
   hide: "<messages|trace|result|all> 关闭实时输出",
@@ -291,6 +296,70 @@ export class Terminal {
       );
     }
     const w = await this.workspace();
+    if (command === "task") {
+      if (!args.length) {
+        const { projection } = await this.request(endpoint + "/context");
+        return this.write(JSON.stringify(projection.task, null, 2));
+      }
+      let patch;
+      if (args[0] === "goal") patch = { goal: args.slice(1).join(" ") };
+      else if (args[0] === "constraints")
+        patch = {
+          constraints: args
+            .slice(1)
+            .join(" ")
+            .split(";")
+            .map((t) => t.trim())
+            .filter(Boolean),
+        };
+      else if (args[0] === "rebase") patch = { rebase: true };
+      else throw new Error("使用 /task goal、constraints 或 rebase。");
+      const saved = await this.request(endpoint + "/task", "PATCH", patch);
+      return this.write(JSON.stringify(saved.task, null, 2));
+    }
+    if (command === "capacity") {
+      const member = await this.member(args[0]);
+      const number = args[2] === "unknown" ? null : Number(args[2]);
+      if (number !== null && !Number.isInteger(number))
+        throw new Error("容量应为整数或 unknown。");
+      const saved = await this.request(
+        endpoint + "/members/" + member.id,
+        "PATCH",
+        { capacity: { ...member.capacity, [args[1]]: number } },
+      );
+      return this.write(JSON.stringify(saved.member.capacity));
+    }
+    if (command === "recall") {
+      const { messages } = await this.request(endpoint + "/evidence", "POST", {
+        messageIds: tail.split(",").map((t) => t.trim()),
+      });
+      return messages.forEach((m) =>
+        this.write("[" + m.author + " · " + m.id + "]\n" + m.content),
+      );
+    }
+    if (command === "inspect") {
+      const result = await this.request(
+        tail ? endpoint + "/requests/" + tail : endpoint + "/context",
+      );
+      return this.write(
+        JSON.stringify(
+          tail
+            ? result.request
+            : result.requests.map(
+                ({ id, phase, model, status, measured, capacity }) => ({
+                  id,
+                  phase,
+                  model,
+                  status,
+                  measured,
+                  capacity,
+                }),
+              ),
+          null,
+          2,
+        ),
+      );
+    }
     if (command === "agents")
       return w.members.forEach((m, i) =>
         this.write(
@@ -323,7 +392,7 @@ export class Terminal {
         );
       const patch =
         command === "model"
-          ? { model: args[1], parameters: {} }
+          ? { model: args[1], parameters: {}, capacity: {} }
           : {
               parameters: {
                 ...m.parameters,
@@ -416,6 +485,9 @@ export class Terminal {
                 memoCount: context.state.notes.length,
                 checkpointCount: context.state.checkpoints.length,
                 currentMessages: context.projection.history.length,
+                task: context.projection.task,
+                capacities: context.capacities,
+                lastRequest: context.requests.at(-1),
               },
           null,
           2,
@@ -507,7 +579,7 @@ export async function connectLocal(
       signal: AbortSignal.timeout(1500),
     });
     const health = await response.json();
-    if (health.app !== "TalkWithPeer" || health.version !== "0.2.0")
+    if (health.app !== "TalkWithPeer" || health.version !== "0.3.0")
       throw new Error("端口上的服务需要更新或不是 TalkWithPeer。");
   } catch (error) {
     if (error.cause?.code !== "ECONNREFUSED") throw error;

@@ -76,8 +76,13 @@ test("deadlock requires reciprocal explicit refusal after exchange", () => {
     null,
   );
   assert.equal(
-    judgeRound({ candidate, members, votes: [a, b, accept("c")], round: 2 })
-      .kind,
+    judgeRound({
+      candidate,
+      members,
+      votes: [a, b, accept("c")],
+      round: 2,
+      previousVotes: [a, b, accept("c")],
+    }).kind,
     "deadlock",
   );
   assert.equal(
@@ -132,8 +137,13 @@ test("agreement about a deadlock record is not solution consensus", () => {
     null,
   );
   assert.equal(
-    judgeRound({ candidate, members, votes: [a, b, accept("c")], round: 2 })
-      .kind,
+    judgeRound({
+      candidate,
+      members,
+      votes: [a, b, accept("c")],
+      round: 2,
+      previousVotes: [a, b, accept("c")],
+    }).kind,
     "deadlock",
   );
   assert.doesNotThrow(() => validateVote(a, candidate, members));

@@ -79,7 +79,13 @@ export function validateVote(value, candidate, members) {
     disagreements: value.disagreements,
   };
 }
-export function judgeRound({ candidate, members, votes, round }) {
+export function judgeRound({
+  candidate,
+  members,
+  votes,
+  round,
+  previousVotes = [],
+}) {
   const ids = members.map((m) => m.id);
   if (
     !ids.length ||
@@ -114,7 +120,25 @@ export function judgeRound({ candidate, members, votes, round }) {
       const reciprocal = b?.disagreements.find(
         (e) => e.memberId === a.memberId && e.nonNegotiable,
       );
-      if (b && reciprocal && !(a.acceptsSolution && b.acceptsSolution))
+      const priorA = previousVotes.find(
+        (v) => v.memberId === a.memberId && v.candidateId === candidate.id,
+      );
+      const priorB = previousVotes.find(
+        (v) => v.memberId === b?.memberId && v.candidateId === candidate.id,
+      );
+      const repeated =
+        priorA?.disagreements.some(
+          (e) => e.memberId === b?.memberId && e.nonNegotiable,
+        ) &&
+        priorB?.disagreements.some(
+          (e) => e.memberId === a.memberId && e.nonNegotiable,
+        );
+      if (
+        b &&
+        reciprocal &&
+        repeated &&
+        !(a.acceptsSolution && b.acceptsSolution)
+      )
         return {
           kind: "deadlock",
           candidateId: candidate.id,

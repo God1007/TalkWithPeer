@@ -8,6 +8,7 @@ import { Terminal, connectLocal } from "../bin/twp.mjs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { validateCapacity } from "../server/context.mjs";
 
 test("CLI attaches shared server, selects agents and filters attributed messages without deleting history", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "twp-cli-"));
@@ -31,6 +32,7 @@ test("CLI attaches shared server, selects agents and filters attributed messages
         providerId: "fixture",
         model: "model",
         parameters: {},
+        capacity: validateCapacity(input.capacity),
       };
     },
     closeMember() {},
@@ -38,7 +40,9 @@ test("CLI attaches shared server, selects agents and filters attributed messages
     async driver() {
       return {
         async run(prompt) {
-          const candidateId = prompt.match(/"candidateId":"([^"]+)"/)?.[1];
+          const candidateId = prompt.includes("请提出独立观点")
+            ? undefined
+            : [...prompt.matchAll(/"candidateId":"([^"]+)"/g)].at(-1)?.[1];
           return {
             model: "model",
             text: JSON.stringify(
@@ -71,10 +75,70 @@ test("CLI attaches shared server, selects agents and filters attributed messages
     await terminal.execute("1");
     assert.equal((await terminal.workspace()).members.length, 1);
     await terminal.execute("/memo add 保留共享约束");
+    await terminal.execute("/task goal 讨论方案");
+    await terminal.execute("/task constraints 保留原文;不伪造共识");
+    await terminal.execute("/capacity 1 windowTokens 16384");
     await terminal.execute("/context budget 16000");
     await terminal.execute("/hide messages");
     await terminal.execute("需要一个方案");
     await terminal.execute("/wait");
+    const context = await connection.request(
+      "/conversations/" + terminal.id + "/context",
+    );
+    assert.deepEqual(
+      context.projection.task.constraints.map((c) => c.text),
+      ["保留原文", "不伪造共识"],
+    );
+    assert.equal(context.capacities[0].inputLimit, 11776);
+    assert.equal(context.capacities[0].windowSource, "user");
+    assert.ok(context.requests.length >= 2);
+    await terminal.execute("/inspect " + context.requests[0].id);
+    assert.ok(
+      output.some(
+        (line) => line.includes('"inputHash"') && line.includes("保留原文"),
+      ),
+    );
+    const originalUser = (await terminal.workspace()).messages.find(
+      (m) => m.author === "user",
+    );
+    await terminal.execute("/recall " + originalUser.id);
+    await assert.rejects(terminal.execute("/capacity 1 windowTokens nonsense"));
+    await assert.rejects(terminal.execute("/task invalid"));
+    const other = app.store.createConversation();
+    assert.equal(
+      (
+        await fetch(
+          "http://127.0.0.1:" +
+            app.server.address().port +
+            "/api/conversations/" +
+            other.id +
+            "/requests/" +
+            context.requests[0].id,
+          {
+            headers: {
+              Cookie: (
+                await fetch(
+                  "http://127.0.0.1:" +
+                    app.server.address().port +
+                    "/api/session",
+                  {
+                    method: "POST",
+                    headers: {
+                      "X-TWP": "1",
+                      "Content-Type": "application/json",
+                    },
+                    body: "{}",
+                  },
+                )
+              ).headers
+                .get("set-cookie")
+                .split(";")[0],
+            },
+          },
+        )
+      ).status,
+      404,
+    );
     assert.ok(
       output.some(
         (line) => line.includes("[平台]") && line.includes("共享方案"),
@@ -98,6 +162,19 @@ test("CLI attaches shared server, selects agents and filters attributed messages
     );
     await terminal.execute("/project " + project);
     await terminal.execute("/read notes.txt");
+    const fileContext = await connection.request(
+      "/conversations/" + terminal.id + "/context",
+    );
+    const material = fileContext.projection.memo.find((n) => n.material);
+    assert.equal(material.material.hash.length, 64);
+    assert.equal(material.material.path, "notes.txt");
+    await terminal.execute("/project off");
+    assert.ok(
+      !(
+        await connection.request("/conversations/" + terminal.id + "/context")
+      ).projection.memo.some((n) => n.material),
+    );
+    await terminal.execute("/project " + project);
     await assert.rejects(terminal.execute("/read innocent.txt"), /凭证/);
     await assert.rejects(
       terminal.execute("/read ../workspace.sqlite"),

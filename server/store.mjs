@@ -19,9 +19,23 @@ export class Store {
         "CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id,created_at);" +
         "CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id),member_id TEXT,created_at TEXT NOT NULL,data TEXT NOT NULL);" +
         "CREATE INDEX IF NOT EXISTS events_conversation ON events(conversation_id,created_at);" +
-        "CREATE TABLE IF NOT EXISTS settings(id TEXT PRIMARY KEY,data TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS settings(id TEXT PRIMARY KEY,data TEXT NOT NULL);" +
+        "CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id),member_id TEXT,created_at TEXT NOT NULL,data TEXT NOT NULL);" +
+        "CREATE INDEX IF NOT EXISTS requests_conversation ON requests(conversation_id,created_at);",
     );
     // Interrupted work is visible after restart; it is never a successful result.
+    for (const row of this.db.prepare("SELECT data FROM members").all()) {
+      const member = parse(row);
+      if (
+        !member.platformSession ||
+        member.localSession !== member.platformSession
+      ) {
+        member.remoteSession ??= member.localSession ?? null;
+        member.platformSession ??= randomUUID();
+        member.localSession = member.platformSession;
+        this.saveMember(member);
+      }
+    }
     for (const row of this.db
       .prepare("SELECT id,data FROM conversations")
       .all()) {
@@ -38,6 +52,15 @@ export class Store {
         m.status = "interrupted";
         this.saveMessage(m);
       }
+    }
+    for (const row of this.db.prepare("SELECT data FROM requests").all()) {
+      const request = parse(row);
+      if (request.status === "pending")
+        this.saveRequest({
+          ...request,
+          status: "interrupted",
+          error: "服务重启，调用结果未完成确认。",
+        });
     }
   }
   listConversations() {
@@ -96,11 +119,13 @@ export class Store {
   }
   addMember(conversationId, input) {
     if (!this.conversation(conversationId)) throw new Error("会话不存在。");
+    const platformSession = randomUUID();
     const m = {
       id: randomUUID(),
       conversationId,
       active: true,
-      localSession: null,
+      localSession: platformSession,
+      platformSession,
       createdAt: new Date().toISOString(),
       ...input,
     };
@@ -180,6 +205,35 @@ export class Store {
       parse(this.db.prepare("SELECT data FROM settings WHERE id=?").get(id)) ??
       fallback
     );
+  }
+  saveRequest(record) {
+    this.db
+      .prepare(
+        "INSERT INTO requests VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+      )
+      .run(
+        record.id,
+        record.conversationId,
+        record.memberId ?? null,
+        record.createdAt,
+        JSON.stringify(record),
+      );
+    return record;
+  }
+  request(id) {
+    return parse(
+      this.db.prepare("SELECT data FROM requests WHERE id=?").get(id),
+    );
+  }
+  requests(conversationId, memberId = null) {
+    return this.db
+      .prepare(
+        "SELECT data FROM requests WHERE conversation_id=? ORDER BY created_at,rowid",
+      )
+      .all(conversationId)
+      .map(parse)
+      .filter((r) => !memberId || r.memberId === memberId)
+      .map(({ input, ...metadata }) => metadata);
   }
   saveSetting(id, data) {
     this.db

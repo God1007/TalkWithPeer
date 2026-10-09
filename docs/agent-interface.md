@@ -26,6 +26,8 @@ A reasoning-summary is provider-disclosed, not raw private reasoning. Credential
 
 signal requests cancellation. close releases local processes or cancels an active remote task. The caller persists sessionId as remoteSession, not as platform memory. Each request receives the ContextManager projection; native drivers close after each request. Direct API calls are stateless and record reported usage.
 
+Adapters may expose countTokens(prompt, signal) for provider input counting and inputMetadata() for secret-free transport configuration. Missing count endpoints return null; authentication errors remain errors. API metadata includes platform policy instructions and resolved parameters, never auth headers. The engine owns bounded public-evidence retrieval, format repair, coordinated overflow recovery and request auditing; adapters do not maintain shared memory.
+
 ## Discussion responses
 
 Independent opinion:
@@ -43,7 +45,7 @@ Candidate judgment:
       disagreements: [{memberId, reason, nonNegotiable: boolean}]
     }
 
-acceptsSolution means willingness to use the candidate as an answer to the original task. Acknowledging a disagreement record has acceptsSolution=false. Conflicts remain explicit until actual positions change. Candidate IDs prevent old judgments from being reused after revisions.
+acceptsSolution means willingness to use the candidate as an answer to the current user request, including explanations and comparisons. It must not be judged against an older overall project goal. When the current request needs an actionable solution, merely acknowledging a disagreement record has acceptsSolution=false. Conflicts remain explicit until positions change. Results carry requestSourceId and taskRevision; candidate IDs prevent old judgments from being reused after revisions.
 
 Malformed responses get one constrained format retry. Continuing failure pauses the conversation. A terminal result requires valid judgments from every active participant.
 

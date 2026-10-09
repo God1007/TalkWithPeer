@@ -9,6 +9,7 @@ import path from "node:path";
 import { Store } from "../server/store.mjs";
 import { AgentRegistry } from "../server/registry.mjs";
 import { createApp } from "../server/index.mjs";
+import { AGENT_INSTRUCTIONS } from "../shared/agent-instructions.mjs";
 
 test("three stateless API protocols preserve wire format, usage and reject partial output", async () => {
   const requests = [];
@@ -19,7 +20,10 @@ test("three stateless API protocols preserve wire format, usage and reject parti
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : null;
     requests.push({ url: req.url, headers: req.headers, body });
     let data;
-    if (req.url === "/models") data = { data: [{ id: "model" }] };
+    if (req.url === "/models")
+      data = { data: [{ id: "model", context_window: 8192 }] };
+    if (["/messages/count_tokens", "/responses/input_tokens"].includes(req.url))
+      data = { input_tokens: 512 };
     if (req.url === "/chat/completions")
       data = {
         model: "model",
@@ -70,6 +74,18 @@ test("three stateless API protocols preserve wire format, usage and reject parti
         }),
       );
       const adapter = new ApiAdapter(provider, config);
+      assert.equal(provider.models[0].capacity.windowTokens, 8192);
+      if (protocol !== "chat") {
+        assert.equal(await adapter.countTokens("共享上下文"), 512);
+        assert.equal(requests.at(-1).body.model, "model");
+        assert.ok(!Object.hasOwn(requests.at(-1).body, "max_tokens"));
+        assert.equal(
+          protocol === "messages"
+            ? requests.at(-1).body.system
+            : requests.at(-1).body.instructions,
+          AGENT_INSTRUCTIONS,
+        );
+      }
       const output = await adapter.run(
         "共享上下文",
         () => {},
@@ -78,6 +94,17 @@ test("three stateless API protocols preserve wire format, usage and reject parti
       assert.equal(output.text, "公开回答");
       assert.ok(output.usage);
       const request = requests.at(-1);
+      assert.equal(adapter.inputMetadata().instructions, AGENT_INSTRUCTIONS);
+      assert.equal(
+        protocol === "messages"
+          ? request.body.system
+          : protocol === "responses"
+            ? request.body.instructions
+            : request.body.messages[0].content,
+        AGENT_INSTRUCTIONS,
+      );
+      if (protocol === "chat")
+        assert.equal(request.body.messages[0].role, "system");
       assert.equal(request.body.model, "model");
       assert.ok(!JSON.stringify(request.body).includes("previous_response_id"));
       if (protocol === "responses") assert.equal(request.body.store, false);

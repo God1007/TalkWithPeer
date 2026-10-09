@@ -23,8 +23,9 @@ const setup = (mode) => {
         async run(prompt, _delta, _activity, signal) {
           calls.push({ id: member.id, prompt });
           if (signal.aborted) throw new Error("cancelled");
-          const match = prompt.match(/"candidateId":"([^"]+)"/);
-          const candidateId = match?.[1];
+          const candidateId = prompt.includes("请提出独立观点")
+            ? undefined
+            : [...prompt.matchAll(/"candidateId":"([^"]+)"/g)].at(-1)?.[1];
           if (!candidateId)
             return {
               text: JSON.stringify({

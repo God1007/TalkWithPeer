@@ -236,6 +236,7 @@ function AgentForm({
   );
   const [name, setName] = useState(member?.name ?? provider?.name ?? "");
   const [parameters, setParameters] = useState(member?.parameters ?? {});
+  const [capacity, setCapacity] = useState(member?.capacity ?? {});
   const [petId, setPetId] = useState(
     member?.petId ??
       pets[0]?.id ??
@@ -250,6 +251,7 @@ function AgentForm({
     setModel(preferred(p)?.id ?? "");
     setName(p.name);
     setParameters({});
+    setCapacity({});
   };
   return (
     <form
@@ -267,6 +269,7 @@ function AgentForm({
             name,
             parameters,
             petId: selected || null,
+            capacity,
           });
           onClose();
         } catch (e) {
@@ -307,6 +310,7 @@ function AgentForm({
           onChange={(e) => {
             setModel(e.target.value);
             setParameters({});
+            setCapacity({});
           }}
           required
         >
@@ -377,6 +381,37 @@ function AgentForm({
           )}
         </select>
       </label>
+      <details className="capacity-options">
+        <summary>上下文容量</summary>
+        <p className="subtle">
+          窗口留空表示未知；输出预留不会低于 API
+          实际配置的最大输出。原生工具开销可通过额外预留配置。
+        </p>
+        {[
+          ["windowTokens", "模型窗口", 1024, 4000000],
+          ["outputReserve", "输出预留", 256, 65536],
+          ["extraReserve", "额外推理 / 工具预留", 0, 65536],
+          ["safetyReserve", "安全余量", 0, 16384],
+        ].map(([key, label, min, max]) => (
+          <label className="field" key={key}>
+            {label}
+            <input
+              type="number"
+              min={min}
+              max={max}
+              step="1"
+              placeholder={key === "windowTokens" ? "未知" : "使用默认值"}
+              value={capacity[key] ?? ""}
+              onChange={(e) =>
+                setCapacity({
+                  ...capacity,
+                  [key]: e.target.value === "" ? null : Number(e.target.value),
+                })
+              }
+            />
+          </label>
+        ))}
+      </details>
       <ErrorLine error={error} />
       <FormButtons
         busy={busy}
@@ -802,6 +837,322 @@ function ConnectionForm({ onSave, onClose }) {
     </form>
   );
 }
+function ContextPanel({
+  conversationId,
+  members,
+  running,
+  revision,
+  onChange,
+}) {
+  const [data, setData] = useState(null),
+    [error, setError] = useState(null),
+    [busy, setBusy] = useState(false);
+  const [goal, setGoal] = useState(""),
+    [constraints, setConstraints] = useState(""),
+    [budget, setBudget] = useState(24000);
+  const [auto, setAuto] = useState(true),
+    [rebase, setRebase] = useState(false),
+    [request, setRequest] = useState(null);
+  const refresh = useCallback(async () => {
+    const value = await api("/conversations/" + conversationId + "/context");
+    setData(value);
+    setGoal(value.projection.task.goal?.text ?? "");
+    setConstraints(
+      value.projection.task.constraints.map((c) => c.text).join("\n"),
+    );
+    setBudget(value.state.budget);
+    setAuto(value.state.auto);
+  }, [conversationId]);
+  useEffect(() => {
+    let disposed = false;
+    refresh().catch((e) => {
+      if (!disposed) setError(e.message);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [refresh, revision]);
+  const perform = async (action) => {
+    setError(null);
+    setBusy(true);
+    try {
+      await action();
+      await refresh();
+      await onChange();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!data) return <ErrorLine error={error} />;
+  const latest = data.requests.filter((r) => r.phase !== "compaction").at(-1);
+  const checkpoint = data.projection.checkpoint;
+  return (
+    <section className="context-console" aria-label="Agent 上下文">
+      <div className="pane-heading">
+        <div>
+          <span className="eyebrow">AGENT RUNTIME</span>
+          <h2>上下文与记忆</h2>
+        </div>
+        <span className="runtime-badge">v{data.projection.version}</span>
+      </div>
+      <div className="runtime-metrics">
+        <article>
+          <span>固定约束</span>
+          <strong>{data.projection.task.constraints.length}</strong>
+          <small>任务版本 {data.projection.task.revision}</small>
+        </article>
+        <article>
+          <span>共享 / 成员 memo</span>
+          <strong>{data.state.notes.length}</strong>
+          <small>按身份注入</small>
+        </article>
+        <article>
+          <span>Checkpoint</span>
+          <strong>{data.state.checkpoints.length}</strong>
+          <small>原始记录保留</small>
+        </article>
+        <article>
+          <span>最近输入 tokens</span>
+          <strong>{latest?.measured.tokens.toLocaleString() ?? "—"}</strong>
+          <small>
+            {latest?.measured.method === "provider"
+              ? "供应方计数"
+              : latest
+                ? "估算 · 来源见审计"
+                : "尚未调用"}
+          </small>
+        </article>
+      </div>
+      <details className="runtime-section">
+        <summary>目标与固定约束</summary>
+        <p className="subtle">
+          原始用户指令在压缩后仍保留。此处的固定约束由用户管理，模型摘要不能修改。
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            perform(() =>
+              api("/conversations/" + conversationId + "/task", "PATCH", {
+                goal,
+                constraints: constraints
+                  .split("\n")
+                  .map((t) => t.trim())
+                  .filter(Boolean),
+                rebase,
+              }),
+            );
+          }}
+        >
+          <label className="field">
+            任务目标
+            <textarea
+              rows={3}
+              required
+              maxLength={12000}
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              disabled={running || busy}
+            />
+          </label>
+          <label className="field">
+            固定约束（每行一条）
+            <textarea
+              rows={3}
+              value={constraints}
+              onChange={(e) => setConstraints(e.target.value)}
+              disabled={running || busy}
+            />
+          </label>
+          <label className="runtime-check">
+            <input
+              type="checkbox"
+              checked={rebase}
+              onChange={(e) => setRebase(e.target.checked)}
+              disabled={running || busy}
+            />
+            重设旧用户指令的生效边界
+          </label>
+          <button className="button secondary" disabled={running || busy}>
+            保存任务
+          </button>
+        </form>
+      </details>
+      <details className="runtime-section">
+        <summary>容量与压缩策略</summary>
+        <form
+          className="runtime-policy"
+          onSubmit={(e) => {
+            e.preventDefault();
+            perform(() =>
+              api("/conversations/" + conversationId + "/context", "PATCH", {
+                budget: Number(budget),
+                auto,
+              }),
+            );
+          }}
+        >
+          <label className="field">
+            平台输入预算
+            <input
+              type="number"
+              min={4000}
+              max={128000}
+              step={1}
+              value={budget}
+              onChange={(e) => setBudget(e.target.value)}
+              disabled={running || busy}
+            />
+          </label>
+          <label className="runtime-check">
+            <input
+              type="checkbox"
+              checked={auto}
+              onChange={(e) => setAuto(e.target.checked)}
+              disabled={running || busy}
+            />
+            超限时自动压缩
+          </label>
+          <button className="button secondary" disabled={running || busy}>
+            保存策略
+          </button>
+          <button
+            type="button"
+            className="button secondary"
+            disabled={running || busy || !members.length}
+            onClick={() =>
+              perform(() =>
+                api("/conversations/" + conversationId + "/compact", "POST", {
+                  memberId: members[0].id,
+                }),
+              )
+            }
+          >
+            压缩旧记录
+          </button>
+        </form>
+        <div className="capacity-list">
+          {data.capacities.map((c) => (
+            <article key={c.memberId}>
+              <strong>{c.name}</strong>
+              <span>可用输入 {c.inputLimit.toLocaleString()}</span>
+              <small>
+                {c.windowTokens
+                  ? "窗口 " +
+                    c.windowTokens.toLocaleString() +
+                    " · " +
+                    (c.windowSource === "user" ? "用户配置" : "供应方")
+                  : "窗口未知"}
+                {" · 输出预留 " +
+                  c.outputReserve +
+                  " · 额外预留 " +
+                  c.extraReserve +
+                  " · 安全余量 " +
+                  c.safetyReserve}
+              </small>
+            </article>
+          ))}
+        </div>
+      </details>
+      {checkpoint && (
+        <details className="runtime-section">
+          <summary>
+            最近压缩摘要 · {checkpoint.coverageCount} 条覆盖记录
+          </summary>
+          <p className="subtle">模型转述，引用可核对；不作为投票或用户约束。</p>
+          <Markdown>{checkpoint.summary}</Markdown>
+          {["facts", "decisions", "unresolved"].map((key) => (
+            <div key={key}>
+              <h4>
+                {
+                  {
+                    facts: "有来源的陈述",
+                    decisions: "共识记录",
+                    unresolved: "未决问题",
+                  }[key]
+                }
+              </h4>
+              {checkpoint[key].map((item, index) => (
+                <blockquote key={index}>
+                  <p>{item.text}</p>
+                  <q>{item.quote}</q>
+                  <code>{item.sourceId}</code>
+                </blockquote>
+              ))}
+            </div>
+          ))}
+        </details>
+      )}
+      <details className="runtime-section" open>
+        <summary>请求审计 · {data.requests.length} 次调用</summary>
+        <p className="subtle">
+          每次实际输入独立保存；私有 memo
+          只发给所属成员。哈希用于核对平台发送内容。
+        </p>
+        <div className="request-list">
+          {data.requests
+            .slice(-12)
+            .reverse()
+            .map((r) => (
+              <button
+                key={r.id}
+                onClick={async () => {
+                  try {
+                    setRequest(
+                      (
+                        await api(
+                          "/conversations/" +
+                            conversationId +
+                            "/requests/" +
+                            r.id,
+                        )
+                      ).request,
+                    );
+                  } catch (e) {
+                    setError(e.message);
+                  }
+                }}
+              >
+                <span>
+                  <strong>
+                    {members.find((m) => m.id === r.memberId)?.name ?? r.model}
+                  </strong>
+                  <small>
+                    {r.phase} · {r.status}
+                  </small>
+                </span>
+                <span>
+                  {r.measured.tokens.toLocaleString()} tokens
+                  <code>{r.inputHash.slice(0, 10)}</code>
+                </span>
+              </button>
+            ))}
+        </div>
+        {!data.requests.length && (
+          <p className="empty-small">讨论开始后显示实际请求。</p>
+        )}
+        {request && (
+          <div className="request-inspector">
+            <div className="pane-heading">
+              <strong>实际发送的输入</strong>
+              <button className="text-button" onClick={() => setRequest(null)}>
+                收起
+              </button>
+            </div>
+            <p className="subtle">
+              {request.model} · {request.measured.method} · 预算{" "}
+              {request.capacity.inputLimit}
+            </p>
+            <code className="request-hash">{request.inputHash}</code>
+            <pre>{request.input}</pre>
+          </div>
+        )}
+      </details>
+      <ErrorLine error={error} />
+    </section>
+  );
+}
 function TraceView({ detail, member, pet }) {
   const [tab, setTab] = useState("progress");
   return (
@@ -991,6 +1342,10 @@ function App() {
     if (follow.current && scroller.current)
       scroller.current.scrollTop = scroller.current.scrollHeight;
   }, [workspace?.messages.length, current?.status]);
+  useEffect(() => {
+    follow.current = view === "discussion";
+    if (view === "context" && scroller.current) scroller.current.scrollTop = 0;
+  }, [view]);
   useEffect(() => {
     if (modal?.type !== "trace" || !id) return;
     let disposed = false;
@@ -1242,6 +1597,14 @@ function App() {
                       <span>上下文 v{current.contextVersion}</span>
                       <span>{members.length} 位参与者</span>
                     </div>
+                    <ContextPanel
+                      key={id}
+                      conversationId={id}
+                      members={members}
+                      running={running}
+                      revision={workspace?.events.length}
+                      onChange={() => load(id)}
+                    />
                     {current.candidate ? (
                       <>
                         <h3>候选结果 {current.candidate.revision}</h3>
@@ -1479,79 +1842,95 @@ function App() {
                     </button>
                   </div>
                 )}
-                <form className="composer" onSubmit={send}>
-                  <textarea
-                    aria-label="向参与者提问"
-                    value={text}
-                    onChange={(e) => setText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (
-                        e.key === "Enter" &&
-                        !e.shiftKey &&
-                        !e.nativeEvent.isComposing
-                      ) {
-                        e.preventDefault();
-                        send();
+                {view === "discussion" && (
+                  <form className="composer" onSubmit={send}>
+                    <textarea
+                      aria-label="向参与者提问"
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (
+                          e.key === "Enter" &&
+                          !e.shiftKey &&
+                          !e.nativeEvent.isComposing
+                        ) {
+                          e.preventDefault();
+                          send();
+                        }
+                      }}
+                      placeholder={
+                        !id
+                          ? "创建会话后开始讨论"
+                          : !members.length
+                            ? "添加参与者后开始讨论"
+                            : "向参与者提问…"
+                      }
+                      disabled={!id || !members.length}
+                      maxLength={12000}
+                      rows={2}
+                    />
+                    <div className="composer-controls">
+                      <label className="round-control">
+                        判断轮数
+                        <select
+                          value={rounds}
+                          onChange={(e) => setRounds(Number(e.target.value))}
+                          disabled={running}
+                          aria-label="本次判断轮数上限"
+                        >
+                          {[1, 2, 3, 4, 6, 8].map((n) => (
+                            <option value={n} key={n}>
+                              {n}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {running ? (
+                        <button
+                          className="send-button stop"
+                          type="button"
+                          aria-label="暂停讨论"
+                          onClick={async () => {
+                            try {
+                              await api(
+                                "/conversations/" + id + "/stop",
+                                "POST",
+                                {},
+                              );
+                            } catch (e) {
+                              setError(e.message);
+                            }
+                          }}
+                        >
+                          <Stop size={18} weight="fill" />
+                        </button>
+                      ) : (
+                        <button
+                          className="send-button"
+                          type="submit"
+                          aria-label="开始讨论"
+                          disabled={!id || !members.length || !text.trim()}
+                        >
+                          <ArrowUp size={20} weight="bold" />
+                        </button>
+                      )}
+                    </div>
+                  </form>
+                )}
+                {view === "context" && running && (
+                  <button
+                    className="button secondary"
+                    onClick={async () => {
+                      try {
+                        await api("/conversations/" + id + "/stop", "POST", {});
+                      } catch (e) {
+                        setError(e.message);
                       }
                     }}
-                    placeholder={
-                      !id
-                        ? "创建会话后开始讨论"
-                        : !members.length
-                          ? "添加参与者后开始讨论"
-                          : "向参与者提问…"
-                    }
-                    disabled={!id || !members.length}
-                    maxLength={12000}
-                    rows={2}
-                  />
-                  <div className="composer-controls">
-                    <label className="round-control">
-                      判断轮数
-                      <select
-                        value={rounds}
-                        onChange={(e) => setRounds(Number(e.target.value))}
-                        disabled={running}
-                        aria-label="本次判断轮数上限"
-                      >
-                        {[1, 2, 3, 4, 6, 8].map((n) => (
-                          <option value={n} key={n}>
-                            {n}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {running ? (
-                      <button
-                        className="send-button stop"
-                        type="button"
-                        aria-label="暂停讨论"
-                        onClick={async () => {
-                          try {
-                            await api(
-                              "/conversations/" + id + "/stop",
-                              "POST",
-                              {},
-                            );
-                          } catch (e) {
-                            setError(e.message);
-                          }
-                        }}
-                      >
-                        <Stop size={18} weight="fill" />
-                      </button>
-                    ) : (
-                      <button
-                        className="send-button"
-                        type="submit"
-                        aria-label="开始讨论"
-                        disabled={!id || !members.length || !text.trim()}
-                      >
-                        <ArrowUp size={20} weight="bold" />
-                      </button>
-                    )}
-                  </div>
-                </form>
+                  >
+                    暂停讨论
+                  </button>
+                )}
               </div>
             </>
           )}
