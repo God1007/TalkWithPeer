@@ -24,3 +24,17 @@ test('mutual holdout becomes deadlock after two review rounds',async()=>{
 test('invalid judgments pause without fabricating consensus',async()=>{
   const s=setup('error');try{await s.engine.start(s.c.id,'讨论结果');assert.equal(s.store.conversation(s.c.id).status,'paused');assert.equal(s.store.messages(s.c.id).filter(m=>m.kind==='result').length,0);}finally{s.store.close();}
 });
+test('shared records are complete and delivered incrementally per native session',async()=>{
+  const s=setup('agree');try{
+    s.store.addMessage(s.c.id,{author:'user',kind:'user',content:'必须保留的早期约束'.repeat(5000)});
+    const full=s.engine.snapshot(s.c.id,s.members);
+    assert.ok(full.history[0].content.length>32000);
+    assert.equal(s.engine.memberSnapshot(full,s.members[0]).syncMode,'full');
+    s.store.patchMember(s.members[0].id,{localSession:'native',lastSyncedMessageId:full.lastMessageId});
+    s.store.addMessage(s.c.id,{author:'user',kind:'user',content:'新消息'});
+    const next=s.engine.memberSnapshot(s.engine.snapshot(s.c.id,s.members),s.members[0]);
+    assert.equal(next.syncMode,'incremental');assert.equal(next.history.length,1);assert.equal(next.history[0].content,'新消息');
+    s.store.patchMember(s.members[0].id,{localSession:null});
+    assert.equal(s.engine.memberSnapshot(s.engine.snapshot(s.c.id,s.members),s.members[0]).history.length,2);
+  }finally{s.store.close();}
+});

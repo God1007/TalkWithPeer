@@ -1,4 +1,4 @@
-import {mkdir} from 'node:fs/promises';
+import {mkdir,stat} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import path from 'node:path';
 import {discoverNative,resolveModel} from './catalog.mjs';
@@ -21,7 +21,8 @@ export class AgentRegistry {
   async driver(member,conversation){
     const provider=this.provider(member.providerId);if(!provider)throw new Error('Agent 连接不存在。');
     const config=resolveModel(provider,member);
-    const cwd=conversation.projectPath??path.join(this.root,'projects',conversation.id,member.id);await mkdir(cwd,{recursive:true});
+    const cwd=conversation.projectPath??path.join(this.root,'projects',conversation.id,member.id);
+    if(conversation.projectPath){if(!(await stat(cwd)).isDirectory())throw new Error('所选项目目录已不可用。');}else await mkdir(cwd,{recursive:true});
     const fingerprint=JSON.stringify([member.providerId,config.model,config.parameters,cwd]);
     const cached=this.drivers.get(member.id);
     if(cached?.fingerprint===fingerprint)return cached.driver;

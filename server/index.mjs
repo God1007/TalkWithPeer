@@ -93,7 +93,7 @@ export async function createApp({root=dataRoot,store:providedStore,registry:prov
         if(pieces.length===3&&req.method==='PATCH'){
           editable(id);const patch={};
           if(Object.hasOwn(body,'title')){if(typeof body.title!=='string'||!body.title.trim()||body.title.length>100)throw new Error('会话名称无效。');patch.title=body.title.trim();}
-          if(Object.hasOwn(body,'projectPath')){patch.projectPath=body.projectPath===null?null:await validProject(body.projectPath);editable(id);for(const member of store.members(id)){registry.closeMember(member.id);store.patchMember(member.id,{localSession:null});}}
+          if(Object.hasOwn(body,'projectPath')){patch.projectPath=body.projectPath===null?null:await validProject(body.projectPath);editable(id);for(const member of store.members(id)){registry.closeMember(member.id);store.patchMember(member.id,{localSession:null,lastSyncedMessageId:null,syncedVersion:null});}}
           store.patchConversation(id,patch);if(Object.hasOwn(patch,'projectPath'))bump(id);else engine.update(id);json(res,200,store.workspace(id));return;
         }
         if(pieces[3]==='members'&&pieces.length===4&&req.method==='POST'){

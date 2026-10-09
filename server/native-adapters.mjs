@@ -47,6 +47,7 @@ export class CodexAdapter {
       if(signal.aborted)throw new Error('讨论已停止。');
       await this.connect();rpc=this.rpc;
       if(signal.aborted)throw new Error('讨论已停止。');
+      onActivity({type:'session',sessionId:this.sessionId,text:'已连接 Codex 原生会话。'});
       const items=new Map();let streamed='';
       let resolveDone,rejectDone;
       const done=new Promise((resolve,reject)=>{resolveDone=resolve;rejectDone=reject;});
@@ -72,7 +73,7 @@ export class CodexAdapter {
       };
       closedListener=error=>rejectDone(error);
       rpc.on('message',listener);rpc.on('closed',closedListener);
-      await rpc.call('turn/start',{threadId:this.sessionId,input:[{type:'text',text:prompt}],model:this.meta.modelId,effort:this.parameters.effort??'low'});
+      await rpc.call('turn/start',{threadId:this.sessionId,input:[{type:'text',text:prompt}],model:this.meta.modelId,effort:this.parameters.effort??'low',summary:'detailed'});
       const text=await done;
       if(!text.trim())throw new Error('Codex 返回了空回复。');
       return{text,sessionId:this.sessionId,model:this.actualModel};
@@ -86,7 +87,7 @@ export class ReasonixAdapter {
   async connect(){
     if(this.rpc&&!this.rpc.closed)return;
     const rpc=this.rpc=new RpcPeer('reasonix',['acp','--model',this.meta.modelId.split('/')[0],'--workspace-only','--sandbox-bash','enforce','--sandbox-network','off'],this.cwd);
-    const init=await rpc.call('initialize',{protocolVersion:1,clientInfo:{name:'common-agent-space',title:'同席 Agent Space',version:'0.2.0'},clientCapabilities:{}},30000);
+    const init=await rpc.call('initialize',{protocolVersion:1,clientInfo:{name:'talkwithpeer',title:'TalkWithPeer',version:'0.1.0'},clientCapabilities:{}},30000);
     const canResume=init.agentCapabilities?.sessionCapabilities?.resume;
     const result=await rpc.call(this.sessionId&&canResume?'session/resume':'session/new',{...(this.sessionId&&canResume?{sessionId:this.sessionId}:{}),cwd:this.cwd,mcpServers:[]},30000);
     this.sessionId=result.sessionId??this.sessionId;
@@ -106,7 +107,8 @@ export class ReasonixAdapter {
     try{
       if(signal.aborted)throw new Error('讨论已停止。');
       await this.connect();rpc=this.rpc;if(signal.aborted)throw new Error('讨论已停止。');
-      let text='';
+      onActivity({type:'session',sessionId:this.sessionId,text:'已连接 Reasonix 原生会话。'});
+      let text='',reportedThinking=false;
       listener=message=>{
         if(Object.hasOwn(message,'id')){
           if(message.method==='session/request_permission')rpc.respond(message.id,{outcome:{outcome:'cancelled'}});
@@ -116,6 +118,7 @@ export class ReasonixAdapter {
         const p=message.params??{};if(message.method!=='session/update'||p.sessionId!==this.sessionId)return;
         const update=p.update;
         if(update?.sessionUpdate==='agent_message_chunk'&&update.content?.type==='text'){text+=update.content.text;onDelta(update.content.text);}
+        if(update?.sessionUpdate==='agent_thought_chunk'&&!reportedThinking){reportedThinking=true;onActivity({type:'reasoning',text:'正在分析本轮问题。'});}
         if(update?.sessionUpdate==='tool_call')onActivity('Reasonix 报告工具状态：'+(update.title??update.kind??'工具'));
       };
       rpc.on('message',listener);
@@ -138,8 +141,8 @@ export class CursorAdapter {
     if(signal.aborted)throw new Error('讨论已停止。');
     const args=['--print','--mode','ask','--sandbox','enabled','--trust','--output-format','stream-json','--stream-partial-output','--model',this.meta.modelId,'--workspace',this.cwd];
     if(this.sessionId)args.push('--resume',this.sessionId);
-    args.push('--',prompt);
-    const child=this.child=spawn('cursor-agent',args,{cwd:this.cwd,stdio:['ignore','pipe','pipe'],detached:process.platform!=='win32'});
+    const child=this.child=spawn('cursor-agent',args,{cwd:this.cwd,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});
+    child.stdin.on('error',()=>{});child.stdin.end(prompt);
     const cancel=()=>killProcess(child);signal.addEventListener('abort',cancel,{once:true});
     let result=null,stderr='',actualModel=this.meta.modelId,parseError=null;
     const lines=createInterface({input:child.stdout,crlfDelay:Infinity});
@@ -147,7 +150,7 @@ export class CursorAdapter {
       if(line.length>4_000_000){parseError=new Error('Cursor 输出超过限制。');killProcess(child);return;}
       let event;try{event=JSON.parse(line);}catch{return;}
       if(event.session_id)this.sessionId=event.session_id;
-      if(event.type==='system'&&event.model)actualModel=event.model;
+      if(event.type==='system'){if(event.model)actualModel=event.model;if(this.sessionId)onActivity({type:'session',sessionId:this.sessionId,text:'已连接 Cursor 原生会话。'});}
       const delta=cursorDelta(event);if(delta)onDelta(delta);
       if(event.type==='tool_call'&&event.subtype==='started')onActivity('Cursor 报告只读工具活动。');
       if(event.type==='result')result=event;
