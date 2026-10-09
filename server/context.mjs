@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { parseJsonResponse } from "./convergence.mjs";
 
-// shortcut: conservative UTF-8 byte estimate; add provider tokenizers when precise budgets are required.
+// shortcut: UTF-8 heuristic can undercount; use provider tokenizers for window enforcement.
 export const estimateTokens = (value) =>
   Math.ceil(Buffer.byteLength(JSON.stringify(value), "utf8") / 3);
 export class ContextManager {

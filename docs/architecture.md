@@ -14,6 +14,8 @@ ContextManager 是记录到输入的唯一投影入口。输入包含共享 memo
 
 预算按 UTF-8 字节估算，检查实际拼接后的请求。超过预算可压缩早期用户轮次，最新用户轮次及其观点、判断不裁剪。新 checkpoint 保存源消息 ID、边界、前一 checkpoint ID 和生成模型；原始日志完整保留。失败、取消、来源无效或压缩未减小容量时，不替换已有 checkpoint。
 
+具体缺口与下一阶段设计见 [上下文管理](context-design.md)。字节估算不是可靠的 token 上界，当前未按模型窗口扣除输出/推理预算；来源 ID 验证不保证摘要语义正确。
+
 memo 当前由用户管理，没有模型自行无限写入的长期记忆或向量库。成员 memo 是上下文隔离，不是多用户 ACL。模型摘要可追溯，但语义正确性需要核对。
 
 借鉴 [Pi compaction](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/compaction.md) 的追加 checkpoint 与上下文重建，参考 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的显式组件边界，未引入完整框架。

@@ -53,3 +53,12 @@
 - 新增 HTTP 检查，覆盖手动 Key 接入、文件权限、重建 registry 后调用、数据库和响应不回显密钥、认证失败和非法 JSON 不泄露凭证。
 - 当前 23 项检查通过，前端构建成功；OpenAI/Anthropic 仍为协议验证，不将缺少真实 API Key 的测试标成真实调用。
 - 已从网页创建“DeepSeek 直连”，使用已有 Reasonix 凭证发现 deepseek-flash 与 deepseek-v4-pro。该直接 API 与原生 Reasonix 同场发布真实观点和判断，最终达成共识。
+
+### 上下文设计盘点与项目首页
+
+- 核对 ContextManager、讨论引擎、adapter 和 23 项现有检查，明确区分公开记录同步、语义漂移与模型窗口耗尽；本次没有修改运行时行为。
+- 新增 context-design.md，记录已有机制、摘要来源校验的局限、统一预算缺少模型输出/推理预留、当前轮次不可压缩、身份元数据与投影审计缺口，并给出 P0–P2 实现与评测顺序。
+- 参考 Pi、DeepSeek Harness compaction、Anthropic context editing 与 A2A contextId 官方文档；计划未标为已完成。
+- README 改为 Agent 圆桌项目首页，加入原创 SVG 横幅、快速开始、真实验证能力表、结构图、贡献路线图；全部命令与详细配置迁入 docs/usage.md。
+- 未将用户导入的个人 pet 素材提交为宣传资产。仓库当前公开但尚无 LICENSE，许可选择等待维护者确定。
+- 已核对 31 个文档相对链接及 SVG，23 项现有检查全部通过。

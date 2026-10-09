@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="title desc">
+  <title id="title">TalkWithPeer — A roundtable for your agents</title>
+  <desc id="desc">Three original agent characters around a shared conversation record, representing native agents, model APIs and A2A peers.</desc>
+  <rect width="1200" height="440" rx="24" fill="#f5f4f0"/>
+  <g fill="none" stroke="#dfddd5" stroke-width="1">
+    <path d="M594 38V402M638 38V402M682 38V402M726 38V402M770 38V402M814 38V402M858 38V402M902 38V402M946 38V402M990 38V402M1034 38V402M1078 38V402M1122 38V402"/>
+    <path d="M594 82H1164M594 126H1164M594 170H1164M594 214H1164M594 258H1164M594 302H1164M594 346H1164M594 390H1164"/>
+  </g>
+  <g transform="translate(64 55)">
+    <circle cx="10" cy="10" r="10" fill="#242c36"/>
+    <circle cx="27" cy="10" r="10" fill="#b5b8e5"/>
+    <circle cx="18" cy="25" r="10" fill="#7982cd"/>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif" fill="#242c36">
+    <text x="64" y="164" font-size="58" font-weight="700" letter-spacing="-2">TalkWithPeer</text>
+    <text x="66" y="210" font-size="27">A roundtable for your agents.</text>
+    <text x="66" y="249" font-size="16" fill="#65707a">Shared context. Independent views. Traceable decisions.</text>
+  </g>
+  <rect x="64" y="292" width="458" height="90" rx="12" fill="#fff" stroke="#deddd7"/>
+  <g font-family="monospace" font-size="16">
+    <text x="84" y="327" fill="#7982cd">twp&gt;</text>
+    <text x="136" y="327" fill="#242c36">/choose codex,cursor</text>
+    <text x="84" y="356" fill="#77818b" font-size="13">Bring your agents. Keep the conversation.</text>
+  </g>
+  <ellipse cx="876" cy="348" rx="258" ry="50" fill="#e5e1d7"/>
+  <g fill="none" stroke="#9da3ae" stroke-width="2" stroke-dasharray="5 6">
+    <path d="M722 245L863 282M1009 177L912 254M1044 324L938 295"/>
+  </g>
+  <g transform="translate(791 195) rotate(-5 86 74)">
+    <rect width="174" height="146" rx="14" fill="#fff" stroke="#c4c8d0" stroke-width="2"/>
+    <circle cx="24" cy="26" r="6" fill="#7982cd"/>
+    <text x="39" y="31" fill="#394552" font-family="Arial, sans-serif" font-size="14" font-weight="700">shared record</text>
+    <path d="M22 54H152M22 76H130M22 98H146M22 120H116" stroke="#d9dce3" stroke-width="6" stroke-linecap="round"/>
+    <path d="M22 76H84" stroke="#c2d9ca" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(642 170)">
+    <path d="M7 45Q1 10 32 10H80Q110 10 104 45L96 100H16Z" fill="#b6b9e7" stroke="#6d75b5" stroke-width="3"/>
+    <path d="M28 12L18 -2M83 12L93 -2" stroke="#6d75b5" stroke-width="4" stroke-linecap="round"/>
+    <rect x="20" y="35" width="72" height="36" rx="14" fill="#fff"/>
+    <circle cx="42" cy="51" r="5" fill="#323948"/><circle cx="71" cy="51" r="5" fill="#323948"/>
+    <path d="M47 64Q56 71 65 64" fill="none" stroke="#6d75b5" stroke-width="2"/>
+    <path d="M25 102V119M85 102V119" stroke="#6d75b5" stroke-width="7" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(950 102)">
+    <rect x="4" y="17" width="112" height="99" rx="36" fill="#b7d4c0" stroke="#5e8970" stroke-width="3"/>
+    <path d="M24 17L11 2M95 17L108 2" stroke="#5e8970" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="42" cy="60" r="6" fill="#31453a"/><circle cx="78" cy="60" r="6" fill="#31453a"/>
+    <path d="M49 82H72" stroke="#5e8970" stroke-width="3" stroke-linecap="round"/>
+    <path d="M28 119V130M91 119V130" stroke="#5e8970" stroke-width="7" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(1007 265)">
+    <path d="M7 66Q-2 30 24 11Q60 -15 97 11Q126 33 112 66L103 111H18Z" fill="#edd3a1" stroke="#b79756" stroke-width="3"/>
+    <circle cx="43" cy="52" r="5" fill="#514834"/><circle cx="80" cy="52" r="5" fill="#514834"/>
+    <path d="M48 77Q61 89 75 77" fill="none" stroke="#b79756" stroke-width="3" stroke-linecap="round"/>
+    <path d="M31 113V123M89 113V123" stroke="#b79756" stroke-width="7" stroke-linecap="round"/>
+  </g>
+  <g font-family="Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1" fill="#65707a" text-anchor="middle">
+    <text x="698" y="318">NATIVE AGENT</text>
+    <text x="1009" y="258">MODEL API</text>
+    <text x="1067" y="418">A2A PEER</text>
+  </g>
+  <g transform="translate(667 87)">
+    <rect width="142" height="48" rx="14" fill="#fff" stroke="#d7d9e0"/>
+    <path d="M35 47L43 57L50 47" fill="#fff" stroke="#d7d9e0"/>
+    <text x="71" y="30" text-anchor="middle" fill="#596270" font-family="Arial, sans-serif" font-size="16">One more angle.</text>
+  </g>
+</svg>
