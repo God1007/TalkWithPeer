@@ -44,3 +44,12 @@
 - 当前 22 项检查通过，新增 API 三种协议、截断回答拒绝、memo 隔离、checkpoint 来源验证、自动预算压缩、停止后身份保留、终端输出筛选和安装软链接入口检查。
 - OpenAI/Anthropic 没有本机 API 密钥，当前为协议测试；A2A 使用协议级服务检查，没有连接用户真实第三方服务。
 - 设计参考为 Pi compaction、DeepSeek Harness 与各供应方官方 API 文档。没有引入整套 harness、向量数据库、多用户 ACL 或任意 shell 执行。
+
+### 网页 API 接入补齐
+
+- 用户指出网页只能看到 Agent 接入。后端此前已有直接 API，但网页创建入口只支持 A2A，现已补齐统一连接表单。
+- 提供 DeepSeek、OpenAI、Anthropic 预设与自定义 Chat Completions / Responses / Messages；前后端共用预设地址和协议，避免漂移。
+- 支持填写 API Key、环境变量或已有 Reasonix DeepSeek 凭证。Key 发现模型成功后才写入本机专用凭证文件，目录 700、文件 600，配置与响应不包含 Key；不使用浏览器持久化存储。尚未接入系统钥匙串。
+- 新增 HTTP 检查，覆盖手动 Key 接入、文件权限、重建 registry 后调用、数据库和响应不回显密钥、认证失败和非法 JSON 不泄露凭证。
+- 当前 23 项检查通过，前端构建成功；OpenAI/Anthropic 仍为协议验证，不将缺少真实 API Key 的测试标成真实调用。
+- 已从网页创建“DeepSeek 直连”，使用已有 Reasonix 凭证发现 deepseek-flash 与 deepseek-v4-pro。该直接 API 与原生 Reasonix 同场发布真实观点和判断，最终达成共识。

@@ -50,6 +50,10 @@
 
 ## 直接模型 API
 
+网页中打开 **设置 → 添加 API / Agent 连接 → 模型 API**，选择 DeepSeek、OpenAI、Anthropic 或自定义兼容 API。填写连接名称、基础地址及认证方式，连接后在“添加参与者”中选择该连接和模型。API 与原生 Agent 可以参加同一场讨论。
+
+认证方式支持填写 API Key、使用服务进程的环境变量，以及复用本机 Reasonix 的官方 DeepSeek 凭证。填写的 Key 在发现模型成功后保存到本机 runtime/credentials/，目录权限 700、文件权限 600；它是本机明文文件，未接入系统钥匙串。连接配置只保存凭证来源，不保存或返回 Key；表单成功后清空 Key。不使用浏览器 localStorage 保存凭证。
+
 直接 API 使用平台构建的完整上下文，不依赖供应方的会话续接或原生 harness。模型来自实际 /models 接口；输出上限可通过 /param 1 outputTokens 4096 设置。
 
 在启动服务的环境中设置相应密钥，再连接：
@@ -59,7 +63,7 @@
     /connect anthropic
     /choose
 
-环境变量分别为 DEEPSEEK_API_KEY、OPENAI_API_KEY、ANTHROPIC_API_KEY。密钥值不写入数据库、网页或仓库。模型由账户实际能力决定，不硬编码某个模型可用。
+环境变量分别为 DEEPSEEK_API_KEY、OPENAI_API_KEY、ANTHROPIC_API_KEY。密钥值不写入数据库、连接响应或仓库。网页手动输入的 Key 只提交给本机服务，并由服务发送到所配置的 API 地址。模型由账户实际能力决定，不硬编码某个模型可用。
 
 已有 Reasonix 的本机 DeepSeek 凭证时，可明确选择复用：
 
@@ -144,7 +148,7 @@ API 参与者只看平台发送的内容。项目路径本身不会授予远程�
 
 网页支持会话选择、项目浏览、真实模型和参数选择。每位成员在右下角有一个 pet，点击可看 local_session、公开回复和过程。支持导入本机 Codex pets 与 codex://pets/install 链接；个人图片只保存在本机，不进入 Git。
 
-终端添加的 API 连接和参与者也能在网页选择、配置和继续。网页支持枚举参数与数字输出预算。
+网页和终端均可添加 API 连接；连接与参与者可在两种界面选择、配置和继续。网页支持枚举参数与数字输出预算。
 
 ## 数据和边界
 

@@ -1,30 +1,28 @@
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { validateAgentUrl } from "./a2a-adapter.mjs";
+import { API_PRESETS as presets } from "../shared/api-presets.mjs";
 
-const presets = {
-  deepseek: {
-    name: "DeepSeek API",
-    protocol: "chat",
-    baseUrl: "https://api.deepseek.com",
-    tokenEnv: "DEEPSEEK_API_KEY",
-  },
-  openai: {
-    name: "OpenAI API",
-    protocol: "responses",
-    baseUrl: "https://api.openai.com/v1",
-    tokenEnv: "OPENAI_API_KEY",
-  },
-  anthropic: {
-    name: "Anthropic API",
-    protocol: "messages",
-    baseUrl: "https://api.anthropic.com/v1",
-    tokenEnv: "ANTHROPIC_API_KEY",
-  },
-};
-export async function apiKey(provider) {
+function credentialFile(provider, credentialRoot) {
+  if (
+    !credentialRoot ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      provider.id ?? "",
+    )
+  )
+    throw new Error("本机凭证配置无效。");
+  return path.join(credentialRoot, provider.id + ".key");
+}
+export async function apiKey(provider, credentialRoot) {
+  if (provider.credentialSource === "local") {
+    try {
+      return await readFile(credentialFile(provider, credentialRoot), "utf8");
+    } catch {
+      throw new Error("本机 API 凭证不可用，请重新添加连接。");
+    }
+  }
   if (provider.credentialSource === "reasonix") {
     if (
       provider.baseUrl !== presets.deepseek.baseUrl ||
@@ -51,9 +49,13 @@ export async function apiKey(provider) {
   if (!key) throw new Error("请设置环境变量：" + provider.tokenEnv);
   return key;
 }
-async function request(provider, endpoint, { body, signal } = {}) {
+async function request(
+  provider,
+  endpoint,
+  { body, signal, key: suppliedKey, credentialRoot } = {},
+) {
   const headers = { "Content-Type": "application/json" };
-  const key = await apiKey(provider);
+  const key = suppliedKey ?? (await apiKey(provider, credentialRoot));
   if (provider.protocol === "messages") {
     headers["x-api-key"] = key;
     headers["anthropic-version"] = "2023-06-01";
@@ -70,9 +72,13 @@ async function request(provider, endpoint, { body, signal } = {}) {
     throw new Error(
       provider.name + " 请求失败（HTTP " + response.status + "）。",
     );
-  return response.json();
+  try {
+    return await response.json();
+  } catch {
+    throw new Error(provider.name + " 返回的 JSON 格式无效。");
+  }
 }
-export async function discoverApi(input) {
+export async function discoverApi(input, { credentialRoot } = {}) {
   const preset = presets[input.preset];
   if (!preset && !["chat", "responses", "messages"].includes(input.protocol))
     throw new Error("API 类型应为 chat、responses 或 messages。");
@@ -102,11 +108,25 @@ export async function discoverApi(input) {
     throw new Error("API 基础地址不能包含查询或片段。");
   provider.baseUrl = url.href.replace(/\/$/, "");
   if (
-    !/^[A-Z][A-Z0-9_]*$/.test(provider.tokenEnv ?? "") ||
-    !["environment", "reasonix"].includes(provider.credentialSource)
+    (provider.credentialSource !== "local" &&
+      !/^[A-Z][A-Z0-9_]*$/.test(provider.tokenEnv ?? "")) ||
+    !["environment", "reasonix", "local"].includes(provider.credentialSource)
   )
     throw new Error("凭证来源无效。");
-  const result = await request(provider, "/models");
+  let key;
+  if (provider.credentialSource === "local") {
+    if (
+      typeof input.apiKey !== "string" ||
+      !input.apiKey.trim() ||
+      input.apiKey.length > 8192 ||
+      /[\r\n]/.test(input.apiKey)
+    )
+      throw new Error("请输入有效的 API Key。");
+    credentialFile(provider, credentialRoot);
+    key = input.apiKey.trim();
+    provider.tokenEnv = null;
+  }
+  const result = await request(provider, "/models", { key, credentialRoot });
   if (!Array.isArray(result.data) || !result.data.length)
     throw new Error("API 未返回模型列表。");
   provider.models = result.data
@@ -127,6 +147,13 @@ export async function discoverApi(input) {
       ],
     }));
   if (!provider.models.length) throw new Error("API 模型列表无效。");
+  if (key) {
+    await mkdir(credentialRoot, { recursive: true, mode: 0o700 });
+    await writeFile(credentialFile(provider, credentialRoot), key, {
+      mode: 0o600,
+      flag: "wx",
+    });
+  }
   return provider;
 }
 export class ApiAdapter {
@@ -145,6 +172,7 @@ export class ApiAdapter {
     let result, text, usage;
     if (this.provider.protocol === "responses") {
       result = await request(this.provider, "/responses", {
+        credentialRoot: this.options.credentialRoot,
         signal,
         body: { model, input: prompt, store: false, max_output_tokens: limit },
       });
@@ -157,6 +185,7 @@ export class ApiAdapter {
         .join("\n");
     } else if (this.provider.protocol === "messages") {
       result = await request(this.provider, "/messages", {
+        credentialRoot: this.options.credentialRoot,
         signal,
         body: {
           model,
@@ -172,6 +201,7 @@ export class ApiAdapter {
         .join("\n");
     } else {
       result = await request(this.provider, "/chat/completions", {
+        credentialRoot: this.options.credentialRoot,
         signal,
         body: {
           model,

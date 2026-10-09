@@ -3,6 +3,12 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { ApiAdapter, discoverApi, apiKey } from "../server/api-adapter.mjs";
 import { resolveModel } from "../server/catalog.mjs";
+import { mkdtemp, rm, readdir, stat, readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { Store } from "../server/store.mjs";
+import { AgentRegistry } from "../server/registry.mjs";
+import { createApp } from "../server/index.mjs";
 
 test("three stateless API protocols preserve wire format, usage and reject partial output", async () => {
   const requests = [];
@@ -100,5 +106,131 @@ test("three stateless API protocols preserve wire format, usage and reject parti
   } finally {
     delete process.env.TWP_FIXTURE_KEY;
     await new Promise((resolve) => server.close(resolve));
+  }
+});
+test("HTTP API connection stores keys privately, survives new registry and never returns secrets", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "twp-key-"));
+  const key = "local-fixture-credential";
+  let fail = false,
+    malformed = false,
+    receivedKey;
+  const upstream = http.createServer(async (req, res) => {
+    receivedKey = req.headers.authorization;
+    for await (const _ of req) {
+    }
+    if (fail) {
+      res.writeHead(401);
+      res.end(key);
+      return;
+    }
+    if (malformed) {
+      res.end(key);
+      return;
+    }
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify(
+        req.url === "/models"
+          ? { data: [{ id: "fixture-model" }] }
+          : {
+              model: "fixture-model",
+              choices: [
+                { finish_reason: "stop", message: { content: "公开回答" } },
+              ],
+            },
+      ),
+    );
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const store = new Store(":memory:"),
+    registry = new AgentRegistry(store, path.join(root, "runtime"));
+  registry.refresh = async () => registry.list();
+  const app = await createApp({ root, store, registry });
+  await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  const origin = "http://127.0.0.1:" + app.server.address().port;
+  try {
+    const session = await fetch(origin + "/api/session", {
+      method: "POST",
+      headers: { "X-TWP": "1", "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const headers = {
+      Cookie: session.headers.get("set-cookie").split(";")[0],
+      "X-TWP": "1",
+      "Content-Type": "application/json",
+    };
+    const input = {
+      kind: "api",
+      name: "API connection",
+      protocol: "chat",
+      baseUrl: "http://127.0.0.1:" + upstream.address().port,
+      credentialSource: "local",
+      apiKey: key,
+    };
+    const connect = () =>
+      fetch(origin + "/api/providers", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(input),
+      });
+    const response = await connect(),
+      text = await response.text();
+    assert.equal(response.status, 201);
+    assert.ok(!text.includes(key));
+    const { provider } = JSON.parse(text);
+    assert.equal(provider.credentialSource, "local");
+    assert.equal(receivedKey, "Bearer " + key);
+    assert.ok(!JSON.stringify(store.setting("api-providers")).includes(key));
+    const directory = path.join(root, "runtime", "credentials");
+    const files = await readdir(directory);
+    assert.equal(files.length, 1);
+    assert.equal((await stat(directory)).mode & 0o777, 0o700);
+    assert.equal(
+      (await stat(path.join(directory, files[0]))).mode & 0o777,
+      0o600,
+    );
+    assert.equal(await readFile(path.join(directory, files[0]), "utf8"), key);
+    const restarted = new AgentRegistry(store, path.join(root, "runtime"));
+    const c = store.createConversation();
+    const member = store.addMember(c.id, {
+      providerId: provider.id,
+      model: "fixture-model",
+      name: "Peer",
+      parameters: {},
+    });
+    const driver = await restarted.driver(member, c);
+    assert.equal(
+      (
+        await driver.run(
+          "公开材料",
+          () => {},
+          () => {},
+        )
+      ).text,
+      "公开回答",
+    );
+    const bootstrap = await (
+      await fetch(origin + "/api/bootstrap", { headers })
+    ).text();
+    assert.ok(!bootstrap.includes(key));
+    fail = true;
+    const failure = await connect();
+    assert.equal(failure.status, 400);
+    assert.ok(!(await failure.text()).includes(key));
+    fail = false;
+    malformed = true;
+    const invalid = await connect();
+    assert.equal(invalid.status, 400);
+    assert.ok(!(await invalid.text()).includes(key));
+    assert.equal((await readdir(directory)).length, 1);
+    await assert.rejects(
+      apiKey({ id: "../escape", credentialSource: "local" }, directory),
+      /不可用/,
+    );
+    restarted.close();
+  } finally {
+    await app.close();
+    await new Promise((resolve) => upstream.close(resolve));
+    await rm(root, { recursive: true, force: true });
   }
 });

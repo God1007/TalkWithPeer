@@ -26,6 +26,7 @@ import {
   GitBranch,
 } from "@phosphor-icons/react";
 import "./style.css";
+import { API_PRESETS } from "../shared/api-presets.mjs";
 
 const effortLabels = {
   auto: "自动",
@@ -593,6 +594,11 @@ function PetManager({ pets, codexPets, onImport, onClose }) {
   );
 }
 function ConnectionForm({ onSave, onClose }) {
+  const [kind, setKind] = useState("api");
+  const [preset, setPreset] = useState("deepseek");
+  const [config, setConfig] = useState(API_PRESETS.deepseek);
+  const [credentialSource, setCredentialSource] = useState("local");
+  const [key, setKey] = useState("");
   const [cardUrl, setCardUrl] = useState("");
   const [tokenEnv, setTokenEnv] = useState("");
   const [busy, setBusy] = useState(false);
@@ -604,7 +610,17 @@ function ConnectionForm({ onSave, onClose }) {
         setBusy(true);
         setError(null);
         try {
-          await onSave({ cardUrl, tokenEnv: tokenEnv || null });
+          await onSave(
+            kind === "a2a"
+              ? { cardUrl, tokenEnv: tokenEnv || null }
+              : {
+                  kind: "api",
+                  ...config,
+                  credentialSource,
+                  ...(credentialSource === "local" ? { apiKey: key } : {}),
+                },
+          );
+          setKey("");
           onClose();
         } catch (e) {
           setError(e.message);
@@ -613,27 +629,176 @@ function ConnectionForm({ onSave, onClose }) {
         }
       }}
     >
-      <label className="field">
-        Agent Card 地址
-        <input
-          type="url"
-          placeholder="https://…/.well-known/agent-card.json"
-          value={cardUrl}
-          onChange={(e) => setCardUrl(e.target.value)}
-          required
-        />
-      </label>
-      <label className="field">
-        认证环境变量 <span className="optional">可选</span>
-        <input
-          value={tokenEnv}
-          onChange={(e) => setTokenEnv(e.target.value)}
-          placeholder="A2A_AGENT_TOKEN"
-          pattern="[A-Z][A-Z0-9_]*"
-        />
-      </label>
+      <fieldset className="connection-fields" disabled={busy}>
+        <div className="tabs">
+          {[
+            ["api", "模型 API"],
+            ["a2a", "A2A Agent"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={kind === value}
+              className={kind === value ? "selected" : ""}
+              onClick={() => {
+                setKind(value);
+                setKey("");
+                setError(null);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {kind === "api" ? (
+          <>
+            <label className="field">
+              服务商
+              <select
+                value={preset}
+                onChange={(e) => {
+                  setPreset(e.target.value);
+                  setConfig(
+                    API_PRESETS[e.target.value] ?? {
+                      name: "",
+                      protocol: "chat",
+                      baseUrl: "",
+                      tokenEnv: "MODEL_API_KEY",
+                    },
+                  );
+                  setKey("");
+                  setCredentialSource("local");
+                  setError(null);
+                }}
+              >
+                <option value="deepseek">DeepSeek</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="custom">自定义 API</option>
+              </select>
+            </label>
+            <label className="field">
+              连接名称
+              <input
+                required
+                maxLength={80}
+                value={config.name}
+                onChange={(e) => setConfig({ ...config, name: e.target.value })}
+              />
+            </label>
+            <label className="field">
+              API 协议
+              <select
+                value={config.protocol}
+                onChange={(e) =>
+                  setConfig({ ...config, protocol: e.target.value })
+                }
+              >
+                <option value="chat">Chat Completions（OpenAI 兼容）</option>
+                <option value="responses">OpenAI Responses</option>
+                <option value="messages">Anthropic Messages</option>
+              </select>
+            </label>
+            <label className="field">
+              API 基础地址
+              <input
+                type="url"
+                required
+                value={config.baseUrl}
+                placeholder="https://example.com/v1"
+                onChange={(e) => {
+                  setConfig({ ...config, baseUrl: e.target.value });
+                  setKey("");
+                  setCredentialSource("local");
+                }}
+              />
+            </label>
+            <label className="field">
+              认证方式
+              <select
+                value={credentialSource}
+                onChange={(e) => {
+                  setCredentialSource(e.target.value);
+                  setKey("");
+                }}
+              >
+                <option value="local">填写 API Key</option>
+                <option value="environment">使用环境变量</option>
+                {config.baseUrl === API_PRESETS.deepseek.baseUrl && (
+                  <option value="reasonix">
+                    使用本机 Reasonix 的 DeepSeek 凭证
+                  </option>
+                )}
+              </select>
+            </label>
+            {credentialSource === "local" ? (
+              <label className="field">
+                API Key
+                <input
+                  type="password"
+                  required
+                  maxLength={8192}
+                  autoComplete="new-password"
+                  value={key}
+                  onChange={(e) => setKey(e.target.value)}
+                  placeholder="输入 API Key"
+                />
+                <span className="subtle">
+                  仅保存在本机凭证文件，连接后不再回显。
+                </span>
+              </label>
+            ) : credentialSource === "environment" ? (
+              <label className="field">
+                密钥环境变量
+                <input
+                  required
+                  pattern="[A-Z][A-Z0-9_]*"
+                  value={config.tokenEnv}
+                  onChange={(e) =>
+                    setConfig({ ...config, tokenEnv: e.target.value })
+                  }
+                />
+                <span className="subtle">使用启动本机服务时的环境变量。</span>
+              </label>
+            ) : (
+              <p className="subtle">
+                从本机 Reasonix 读取 DeepSeek 凭证，仅用于官方 DeepSeek 地址。
+              </p>
+            )}
+            <p className="subtle">
+              连接时发现可用模型，随后可添加为讨论参与者。
+            </p>
+          </>
+        ) : (
+          <>
+            <label className="field">
+              Agent Card 地址
+              <input
+                type="url"
+                placeholder="https://…/.well-known/agent-card.json"
+                value={cardUrl}
+                onChange={(e) => setCardUrl(e.target.value)}
+                required
+              />
+            </label>
+            <label className="field">
+              认证环境变量 <span className="optional">可选</span>
+              <input
+                value={tokenEnv}
+                onChange={(e) => setTokenEnv(e.target.value)}
+                placeholder="A2A_AGENT_TOKEN"
+                pattern="[A-Z][A-Z0-9_]*"
+              />
+            </label>
+          </>
+        )}
+      </fieldset>
       <ErrorLine error={error} />
-      <FormButtons busy={busy} label="连接 Agent" onClose={onClose} />
+      <FormButtons
+        busy={busy}
+        label={busy ? "正在连接…" : "添加连接"}
+        onClose={onClose}
+      />
     </form>
   );
 }
@@ -1432,7 +1597,7 @@ function App() {
               agent: modal.member ? "编辑参与者" : "添加参与者",
               project: "选择本地项目",
               pets: "Pets",
-              connect: "连接 A2A Agent",
+              connect: "添加连接",
               settings: "设置",
               members: "参与者",
               trace: modal.member?.name,
@@ -1498,7 +1663,7 @@ function App() {
           {modal.type === "settings" && (
             <>
               <div className="settings-heading">
-                <h3>Agent 连接</h3>
+                <h3>连接</h3>
                 <button
                   className="text-button"
                   onClick={async () => {
@@ -1525,7 +1690,9 @@ function App() {
                       <strong>{p.name}</strong>
                       <span>
                         {p.models.length
-                          ? p.models.length + " 个模型"
+                          ? (p.kind === "api" ? "模型 API · " : "Agent · ") +
+                            p.models.length +
+                            " 个模型"
                           : (p.error ?? "需要配置")}
                       </span>
                     </div>
@@ -1544,7 +1711,7 @@ function App() {
                 onClick={() => setModal({ type: "connect" })}
               >
                 <Plus size={16} />
-                连接 A2A Agent
+                添加 API / Agent 连接
               </button>
               <div className="settings-divider" />
               <div className="settings-heading">

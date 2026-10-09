@@ -33,7 +33,9 @@ export class AgentRegistry {
     return this.list().find((p) => p.id === id);
   }
   async addApi(input) {
-    const provider = await discoverApi(input);
+    const provider = await discoverApi(input, {
+      credentialRoot: path.join(this.root, "credentials"),
+    });
     this.store.saveSetting("api-providers", [
       ...this.store.setting("api-providers", []),
       provider,
@@ -100,6 +102,7 @@ export class AgentRegistry {
     cached?.driver.close();
     const options = {
       ...config,
+      credentialRoot: path.join(this.root, "credentials"),
       localSession: provider.kind === "api" ? member.localSession : null,
     };
     const classes = {
