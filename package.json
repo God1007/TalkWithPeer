@@ -1,11 +1,17 @@
 {
   "name": "talk-with-peer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "engines": {"node": ">=22.13"},
+  "bin": {
+    "twp": "bin/twp.mjs"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "start": "node server/index.mjs",
+    "cli": "node bin/twp.mjs",
     "build": "vite build",
     "test": "node --test tests/*.test.mjs"
   },
@@ -19,5 +25,7 @@
     "react-markdown": "^10.1.0",
     "sharp": "^0.34.5"
   },
-  "devDependencies": {"vite": "^8.3.4"}
+  "devDependencies": {
+    "vite": "^8.3.4"
+  }
 }
