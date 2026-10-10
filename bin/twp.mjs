@@ -6,7 +6,6 @@ import { realpathSync } from "node:fs";
 import { safeError } from "../server/native-adapters.mjs";
 
 export const commands = {
-  logs: "[category=service|http|discussion|model|extension level=info|warn|error conversation=here|ID request=ID before=游标 limit=1-100] 查看持久化后台日志",
   ext: "[add <仓库路径>|list|review <编号>|approve <编号> <哈希> [备注]|enable <编号> <哈希>|disable <编号>|call <编号> <JSON参数>|runs] 管理本机扩展",
   help: "命令列表",
   choose: "[连接编号或ID,...] 列出或添加 Agent；无参数时可输入编号选择",
@@ -240,32 +239,6 @@ export class Terminal {
       tail = args.join(" ");
     const endpoint = "/conversations/" + this.id;
     if (command === "help") return this.write(help);
-    if (command === "logs") {
-      const query = new URLSearchParams();
-      const names = {
-        category: "category",
-        level: "level",
-        conversation: "conversationId",
-        request: "requestId",
-        before: "before",
-        limit: "limit",
-      };
-      for (const arg of args) {
-        const split = arg.indexOf("="),
-          key = arg.slice(0, split);
-        let value = arg.slice(split + 1);
-        if (split < 1 || !names[key] || !value)
-          throw new Error("日志参数无效，使用 /help 查看。");
-        if (key === "conversation" && value === "here") {
-          if (!this.id) throw new Error("请先选择会话。");
-          value = this.id;
-        }
-        query.set(names[key], value);
-      }
-      return this.write(
-        JSON.stringify(await this.request("/logs?" + query), null, 2),
-      );
-    }
     if (command === "ext") {
       if (args[0] === "add") {
         const { library } = await this.request(

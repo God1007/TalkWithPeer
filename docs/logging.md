@@ -18,19 +18,11 @@ before_tool / after_tool hook 还关联 parentExecutionId。按模型 requestId 
 
 模型与工具状态落盘时写日志；重启会把 pending 调用标为 interrupted 并追加日志。serviceId 区分不同服务实例。已有旧审计不会伪造为新日志，统一运行日志从本次更新起采集。
 
-## 查看
+## 后端维护
 
-Web：**设置 → 查看后台日志**。支持分类、级别、当前会话和模型请求 ID 筛选；展开关联详情，按游标查看更早记录。手动刷新。
+运行日志只写入本机数据库的 logs 表，不在 Web 或终端产品界面显示，不提供 `/logs` 命令或 `/api/logs` 查询接口。维护时由开发者使用本机数据库工具检查持久化记录。
 
-CLI：
-
-    /logs
-    /logs category=model conversation=here
-    /logs category=http level=warn limit=20
-    /logs request=<模型请求ID>
-    /logs before=<上一页nextBefore> limit=50
-
-认证后的 `GET /api/logs` 接受 category、level、conversationId、requestId、before、limit；返回 logs 和 nextBefore，默认 50 条、最多 100 条。筛选在数据库中先执行，再分页，不会因其他会话的近期记录而漏掉旧日志。查询日志本身和成功的轮询 GET 不追加日志，避免自我记录与轮询噪声。HTTP 响应头 X-Request-ID 可定位写请求或失败请求。
+后端内部读取按分类、级别、会话和模型请求 ID 筛选后再按顺序 ID 分页，保留测试与故障诊断能力。成功的轮询 GET 不追加日志，避免轮询噪声。HTTP 响应头 X-Request-ID 可用于后台定位写请求或失败请求。
 
 ## 数据边界
 

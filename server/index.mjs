@@ -117,7 +117,6 @@ export async function createApp({
         "continue",
         "stop",
         "stream",
-        "logs",
       ]);
       const parts = pathname.split("/");
       store.log({
@@ -299,22 +298,6 @@ export async function createApp({
           home: os.homedir(),
           local: true,
         });
-        return;
-      }
-      if (url.pathname === "/api/logs" && req.method === "GET") {
-        const q = url.searchParams;
-        json(
-          res,
-          200,
-          store.logs({
-            before: q.has("before") ? Number(q.get("before")) : null,
-            limit: q.has("limit") ? Number(q.get("limit")) : 50,
-            category: q.get("category"),
-            level: q.get("level"),
-            conversationId: q.get("conversationId"),
-            requestId: q.get("requestId"),
-          }),
-        );
         return;
       }
       if (url.pathname === "/api/providers/refresh" && req.method === "POST") {

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { Store } from "../server/store.mjs";
 import { createApp } from "../server/index.mjs";
-import { Terminal, connectLocal } from "../bin/twp.mjs";
+import { Terminal, connectLocal, help, commands } from "../bin/twp.mjs";
 
 test("logs paginate after filtering, survive restart and exclude payloads and credentials", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "twp-logs-"));
@@ -112,7 +112,7 @@ test("logs paginate after filtering, survive restart and exclude payloads and cr
   }
 });
 
-test("HTTP logs authenticate, correlate request IDs, omit query/body secrets and share CLI pagination", async () => {
+test("backend logs persist HTTP metadata without Web or terminal access", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "twp-log-http-"));
   const registry = {
     refresh: async () => [],
@@ -146,7 +146,7 @@ test("HTTP logs authenticate, correlate request IDs, omit query/body secrets and
     );
     assert.equal(bad.status, 404);
     const requestId = bad.headers.get("x-request-id");
-    const httpLogs = (await connection.request("/logs?category=http")).logs;
+    const httpLogs = app.store.logs({ category: "http" }).logs;
     assert.ok(
       httpLogs.some(
         (r) =>
@@ -162,30 +162,23 @@ test("HTTP logs authenticate, correlate request IDs, omit query/body secrets and
       ),
     );
     const count = app.store.logs().logs.length;
-    await connection.request("/logs");
-    await connection.request("/logs");
+    await connection.request("/bootstrap");
+    await connection.request("/bootstrap");
     assert.equal(app.store.logs().logs.length, count);
     const output = [];
     const terminal = new Terminal(connection.request, (line) =>
       output.push(line),
     );
     terminal.id = created.conversation.id;
-    await terminal.execute("/logs category=http limit=1");
-    const page = JSON.parse(output.at(-1));
-    assert.equal(page.logs.length, 1);
-    assert.ok(page.nextBefore);
-    await terminal.execute(
-      "/logs category=http before=" + page.nextBefore + " limit=1",
+    await assert.rejects(terminal.execute("/logs"), /未知命令/);
+    assert.equal(output.length, 0);
+    assert.equal(commands.logs, undefined);
+    assert.ok(!/^\/logs /m.test(help));
+    await assert.rejects(connection.request("/logs"), /接口不存在/);
+    await assert.rejects(
+      connection.request("/logs?category=http"),
+      /接口不存在/,
     );
-    assert.ok(JSON.parse(output.at(-1)).logs[0].id < page.logs[0].id);
-    await terminal.execute("/logs conversation=here");
-    assert.ok(
-      JSON.parse(output.at(-1)).logs.every(
-        (r) => r.conversationId === terminal.id,
-      ),
-    );
-    await assert.rejects(terminal.execute("/logs unknown=x"), /参数/);
-    await assert.rejects(connection.request("/logs?limit=101"), /参数/);
     assert.ok(
       app.store
         .logs({ category: "service" })
