@@ -176,6 +176,43 @@ test("CLI attaches shared server, selects agents and filters attributed messages
     );
     await terminal.execute("/project " + project);
     await assert.rejects(terminal.execute("/read innocent.txt"), /凭证/);
+    const privateMarker = "PRIVATE_STORE_FIXTURE_DO_NOT_SHARE";
+    await mkdir(path.join(project, ".talkwithpeer"));
+    await writeFile(
+      path.join(project, ".talkwithpeer/private.txt"),
+      privateMarker,
+    );
+    await symlink(
+      path.join(project, ".talkwithpeer/private.txt"),
+      path.join(project, "private-alias.txt"),
+    );
+    const beforePrivateRead = await connection.request(
+      "/conversations/" + terminal.id + "/context",
+    );
+    await assert.rejects(
+      terminal.execute("/read .talkwithpeer/private.txt"),
+      /凭证/,
+    );
+    await assert.rejects(terminal.execute("/read private-alias.txt"), /凭证/);
+    const afterPrivateRead = await connection.request(
+      "/conversations/" + terminal.id + "/context",
+    );
+    assert.equal(
+      afterPrivateRead.state.notes.length,
+      beforePrivateRead.state.notes.length,
+    );
+    assert.ok(
+      afterPrivateRead.state.notes.every(
+        (n) => !n.text.includes(privateMarker),
+      ),
+    );
+    await terminal.execute("/read notes.txt");
+    assert.equal(
+      (
+        await connection.request("/conversations/" + terminal.id + "/context")
+      ).projection.memo.findLast((n) => n.material).material.path,
+      "notes.txt",
+    );
     await assert.rejects(
       terminal.execute("/read ../workspace.sqlite"),
       /项目内/,

@@ -612,7 +612,7 @@ export async function createApp({
           const actual = await realpath(path.resolve(c.projectPath, body.path));
           if (
             !actual.startsWith(c.projectPath + path.sep) ||
-            /(?:^|\/)(?:\.env(?:\.[^/]*)?|\.git|\.ssh|\.codex|\.reasonix|credentials[^/]*|[^/]*\.(?:pem|key|p12))(?=\/|$)/i.test(
+            /(?:^|\/)(?:\.env(?:\.[^/]*)?|\.git|\.ssh|\.codex|\.reasonix|\.talkwithpeer|credentials[^/]*|[^/]*\.(?:pem|key|p12))(?=\/|$)/i.test(
               actual,
             )
           )
