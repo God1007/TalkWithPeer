@@ -24,10 +24,14 @@ import {
   WarningCircle,
   CheckCircle,
   GitBranch,
+  Paperclip,
+  FileText,
 } from "@phosphor-icons/react";
 import "./style.css";
 import { API_PRESETS } from "../shared/api-presets.mjs";
 import ExtensionManager from "./extensions.jsx";
+import DocumentImport from "./document-import.jsx";
+import {importedDocuments} from "../shared/document-import.mjs";
 
 const effortLabels = {
   auto: "自动",
@@ -929,6 +933,20 @@ function ContextPanel({
         </article>
       </div>
       <details className="runtime-section">
+        <summary>共享资料与 memo · {data.state.notes.filter(n => !n.memberId).length} 条</summary>
+        {data.state.notes.filter(n => !n.memberId).map(note => (
+          <details className="document-note" key={note.id}>
+            <summary>{note.text.split("\n")[0]}</summary>
+            <pre>{note.text}</pre>
+            <button className="text-button" disabled={running || busy}
+              onClick={() => perform(() => api("/conversations/" + conversationId + "/memo/" + note.id,"DELETE",{}))}>
+              移除这条共享资料
+            </button>
+          </details>
+        ))}
+        {!data.state.notes.some(n => !n.memberId) && <p className="empty-small">暂无共享资料；可在输入框下方导入文件。</p>}
+      </details>
+      <details className="runtime-section">
         <summary>目标与固定约束</summary>
         <p className="subtle">
           原始用户指令在压缩后仍保留。此处的固定约束由用户管理，模型摘要不能修改。
@@ -1245,6 +1263,42 @@ function TraceView({ detail, member, pet }) {
     </>
   );
 }
+function ImportedFiles({conversationId,revision,running,onChange}) {
+  const [files,setFiles] = useState([]);
+  const [expanded,setExpanded] = useState(null);
+  const [removing,setRemoving] = useState(null);
+  const [error,setError] = useState(null);
+  useEffect(() => {
+    let live = true;
+    api("/conversations/" + conversationId + "/context")
+      .then(data => {if(live) {setFiles(importedDocuments(data.state.notes)); setError(null);}})
+      .catch(e => {if(live)setError(e.message);});
+    return () => {live = false;};
+  },[conversationId,revision]);
+  return <section className="imported-files" aria-label="已导入文件">
+    <ErrorLine error={error} />
+    {files.map(file => <article className="imported-file" key={file.id}>
+      <div className="imported-file-row">
+        <button className="imported-file-name" type="button" title={file.name}
+          aria-label={"查看文件 " + file.name} aria-expanded={expanded === file.id}
+          onClick={() => setExpanded(expanded === file.id ? null : file.id)}>
+          <FileText size={16} aria-hidden="true" /><span>{file.name}</span>
+        </button>
+        <IconButton label={"移除文件 " + file.name} disabled={running || Boolean(removing)} onClick={async () => {
+          if(running || removing)return;
+          setRemoving(file.id); setError(null);
+          try {
+            await api("/conversations/" + conversationId + "/memo/" + file.id,"DELETE",{});
+            setFiles(old => old.filter(item => item.id !== file.id));
+            await onChange();
+          } catch(e) {setError(e.message);}
+          finally {setRemoving(null);}
+        }}><X size={15} /></IconButton>
+      </div>
+      {expanded === file.id && <pre className="imported-file-preview">{file.text}</pre>}
+    </article>)}
+  </section>;
+}
 function App() {
   const [bootstrap, setBootstrap] = useState({
     conversations: [],
@@ -1305,6 +1359,7 @@ function App() {
     return () => clearInterval(timer);
   }, [bootstrap.discovering, connected, boot]);
   useEffect(() => {
+    setModal(null);
     if (!id || !connected) {
       setWorkspace(null);
       return;
@@ -1806,6 +1861,10 @@ function App() {
               </div>
               <div className="composer-area">
                 <ErrorLine error={error} />
+                {id && view === "discussion" && (
+                  <ImportedFiles key={id} conversationId={id} revision={current?.contextVersion}
+                    running={running} onChange={() => load(id)} />
+                )}
                 {id && (
                   <div className="member-strip">
                     {members.map((member) => (
@@ -1873,6 +1932,10 @@ function App() {
                       rows={2}
                     />
                     <div className="composer-controls">
+                      <button className="text-button document-button" type="button" disabled={!id || running}
+                        onClick={() => setModal({type:"document",conversationId:id})}>
+                        <Paperclip size={16} /> 导入文件
+                      </button>
                       <label className="round-control">
                         判断轮数
                         <select
@@ -1985,11 +2048,19 @@ function App() {
               members: "参与者",
               trace: modal.member?.name,
               rename: "重命名会话",
+              document: "导入简历 / 资料",
             }[modal.type]
           }
           onClose={closeModal}
-          wide={["trace", "pets", "members", "extensions"].includes(modal.type)}
+          wide={["trace", "pets", "members", "extensions", "document"].includes(modal.type)}
         >
+          {modal.type === "document" && (
+            <DocumentImport running={running} onClose={closeModal} onSave={async (memo) => {
+              const target = modal.conversationId;
+              await api("/conversations/" + target + "/memo","POST",{text:memo});
+              await load(target);
+            }} />
+          )}
           {modal.type === "agent" && (
             <AgentForm
               providers={bootstrap.providers}
