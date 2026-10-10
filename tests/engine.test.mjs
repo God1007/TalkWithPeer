@@ -376,6 +376,7 @@ test("cancellation during input measurement preserves cause before any model rep
     assert.equal(store.conversation(c.id).pauseReason, "measure [已隐藏凭证]");
     assert.equal(calls, 0);
     assert.equal(store.requests(c.id).length, 0);
+    assert.ok(store.messages(c.id).every((m) => m.author === "user"));
     assert.equal(store.conversation(c.id).result, null);
     assert.ok(
       !JSON.stringify(store.logs()).includes("sk-measure-sensitive-value"),
