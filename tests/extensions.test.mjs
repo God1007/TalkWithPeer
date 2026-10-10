@@ -210,6 +210,11 @@ test("project chunks preserve legacy reads, bound text ranges and reject changed
       (await s.extensions.call(tool.id, args, scope)).result;
     await writeFile(path.join(project, "legacy.txt"), "a".repeat(20000));
     const legacy = await call({ path: "legacy.txt" });
+    await mkdir(path.join(project, "directory"));
+    await assert.rejects(
+      call({ path: "directory", offset: 0 }),
+      /普通文本文件/,
+    );
     assert.equal(legacy.content.length, 20000);
     assert.deepEqual(
       Object.keys(legacy).sort(),

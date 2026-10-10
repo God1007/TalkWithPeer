@@ -629,7 +629,8 @@ export class ExtensionRegistry {
           throw new Error("工具不读取项目外文件、凭证或平台私有数据。");
         const limit = segmented ? 1024 * 1024 : 20000;
         const info = await lstat(filename);
-        if (!info.isFile() || info.size > limit)
+        if (!info.isFile()) throw new Error("工具仅支持普通文本文件。");
+        if (info.size > limit)
           throw new Error(
             segmented
               ? "分段读取仅支持不超过1MB的文本文件。"
