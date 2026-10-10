@@ -37,8 +37,14 @@ const operations = {
     capability: "public-history.read",
   },
   project_read: {
-    description: "只读所选项目的文本文件，不读取凭证文件",
-    arguments: { path: "项目内相对路径" },
+    description:
+      "只读项目文本：默认完整读取≤20KB，显式分段读取≤1MB；不读取凭证",
+    arguments: {
+      path: "项目内相对路径",
+      offset: "可选UTF-16码元偏移，默认0；出现分段参数即启用分段",
+      maxChars: "可选1–12000码元，默认8000",
+      expectedHash: "续读时提供上一段contentHash，拒绝不同版本",
+    },
     capability: "project.read",
   },
 };
@@ -582,8 +588,30 @@ export class ExtensionRegistry {
             partial: true,
           }));
       } else {
+        const segmented = ["offset", "maxChars", "expectedHash"].some((k) =>
+          Object.hasOwn(args, k),
+        );
+        const offset = Object.hasOwn(args, "offset") ? args.offset : 0;
+        const maxChars = Object.hasOwn(args, "maxChars") ? args.maxChars : 8000;
         if (
-          Object.keys(args).some((k) => k !== "path") ||
+          segmented &&
+          (!Number.isSafeInteger(offset) ||
+            offset < 0 ||
+            !Number.isInteger(maxChars) ||
+            maxChars < 1 ||
+            maxChars > 12000)
+        )
+          throw new Error("项目分段读取范围无效。");
+        if (
+          Object.hasOwn(args, "expectedHash") &&
+          (typeof args.expectedHash !== "string" ||
+            !/^[a-f0-9]{64}$/i.test(args.expectedHash))
+        )
+          throw new Error("项目文件哈希参数无效。");
+        if (
+          Object.keys(args).some(
+            (k) => !["path", "offset", "maxChars", "expectedHash"].includes(k),
+          ) ||
           !c.projectPath ||
           typeof args.path !== "string" ||
           !args.path ||
@@ -599,17 +627,51 @@ export class ExtensionRegistry {
           )
         )
           throw new Error("工具不读取项目外文件、凭证或平台私有数据。");
-        if ((await lstat(filename)).size > 20000)
-          throw new Error("工具仅支持不超过20KB的文本文件。");
+        const limit = segmented ? 1024 * 1024 : 20000;
+        const info = await lstat(filename);
+        if (!info.isFile()) throw new Error("工具仅支持普通文本文件。");
+        if (info.size > limit)
+          throw new Error(
+            segmented
+              ? "分段读取仅支持不超过1MB的文本文件。"
+              : "工具仅支持不超过20KB的文本文件。",
+          );
         const bytes = await readFile(filename, { signal });
-        if (bytes.length > 20000 || bytes.includes(0))
+        if (bytes.length > limit || bytes.includes(0))
           throw new Error("工具文件超限或不是文本。");
+        const contentHash = createHash("sha256").update(bytes).digest("hex");
+        if (
+          args.expectedHash !== undefined &&
+          args.expectedHash.toLowerCase() !== contentHash
+        )
+          throw new Error("项目文件已变化，请从头重新读取。");
+        let content = bytes.toString("utf8");
+        if (segmented) {
+          try {
+            content = new TextDecoder("utf-8", {
+              fatal: true,
+              ignoreBOM: true,
+            }).decode(bytes);
+          } catch {
+            throw new Error("项目文件不是UTF-8文本。");
+          }
+          if (offset > content.length)
+            throw new Error("项目分段读取范围无效。");
+        }
+        const end = Math.min(content.length, offset + maxChars);
         result = {
           projectPath: projectRoot,
           path: path.relative(projectRoot, filename),
-          content: bytes.toString("utf8"),
-          contentHash: createHash("sha256").update(bytes).digest("hex"),
+          content: segmented ? content.slice(offset, end) : content,
+          contentHash,
           capturedAt: new Date().toISOString(),
+          ...(segmented
+            ? {
+                offset,
+                partial: offset > 0 || end < content.length,
+                nextOffset: end < content.length ? end : null,
+              }
+            : {}),
         };
       }
       if (signal?.aborted) throw signal.reason ?? new Error("执行已取消。");

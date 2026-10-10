@@ -68,3 +68,13 @@ tests/extensions.test.mjs 覆盖独立批准与启用、过期哈希、文件变
     {"toolCall":{"id":"库ID:资料读取工具ID","arguments":{"extensionId":"库ID:资料包ID","path":"审查清单中的精确文件路径","offset":0,"maxChars":8000}}}
 
 每段默认 8000 字符、最多 12000 字符，返回原始文件/资料包哈希、脱敏标记、partial 与 nextOffset；用返回偏移继续读取。不读取包外路径，不读取未授权的资料，不执行任何源码。原插件指令始终是审查材料，不构成当前任务授权。backend 日志继续仅在后端落盘。
+
+## 项目文本分段读取
+
+`project_read` 只提供 `path` 时保持旧行为：完整读取不超过 20000 字节的文本，返回结构不变。明确提供 `offset`、`maxChars` 或 `expectedHash` 中任一字段时启用分段；文件上限为 1MiB，每段默认 8000、最多 12000 个 UTF-16 码元。偏移沿用 JavaScript 字符串索引，不是字节偏移；返回 `offset`、`partial` 和 `nextOffset`，末段的 nextOffset 为 null。未指定的参数使用默认值，显式 null、负数或越界范围被拒绝。
+
+    {"toolCall":{"id":"库ID:项目读取工具ID","arguments":{"path":"server/index.mjs","offset":0,"maxChars":12000}}}
+
+续读使用上一段的 `nextOffset`，并传入上一段的 `contentHash` 作为 `expectedHash`；全文件 SHA-256 与切片来自同一次读取，文件变化时拒绝续读，需重新开始。省略 expectedHash 无法检测不同调用间的版本变化。UTF-16 切点可能位于代理对中间，按返回偏移拼接可恢复原文。
+
+项目范围、凭证/私有目录与二进制拒绝保持不变。1MiB 是文件准入上限，不代表单轮完整读取；返回内容仍经过既有输入预算，单个生成请求最多三次工具调用。工具包文件未改变，原审查哈希保持有效；参数说明由可信处理器随阶段快照提供。`/read` 加入共享 memo 的完整文件读取不改变。
