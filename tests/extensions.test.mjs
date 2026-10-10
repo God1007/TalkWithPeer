@@ -198,6 +198,118 @@ test("trusted read-only handlers enforce scope, project boundaries and deny hook
     await s.close();
   }
 });
+test("project chunks preserve legacy reads, bound text ranges and reject changed versions", async () => {
+  const s = await setup();
+  try {
+    const tool = await s.approve("project");
+    const project = path.join(s.root, "chunk-project");
+    await mkdir(project);
+    const c = s.store.createConversation({ projectPath: project });
+    const scope = { conversationId: c.id };
+    const call = async (args) =>
+      (await s.extensions.call(tool.id, args, scope)).result;
+    await writeFile(path.join(project, "legacy.txt"), "a".repeat(20000));
+    const legacy = await call({ path: "legacy.txt" });
+    assert.equal(legacy.content.length, 20000);
+    assert.deepEqual(
+      Object.keys(legacy).sort(),
+      ["projectPath", "path", "content", "contentHash", "capturedAt"].sort(),
+    );
+    await writeFile(path.join(project, "legacy.txt"), "a".repeat(20001));
+    await assert.rejects(call({ path: "legacy.txt" }), /20KB/);
+    const text = "行🐾abc\n".repeat(3000);
+    await writeFile(path.join(project, "large.txt"), text);
+    let offset = 0,
+      content = "",
+      expectedHash;
+    do {
+      const page = await call({
+        path: "large.txt",
+        offset,
+        maxChars: 8000,
+        ...(expectedHash ? { expectedHash } : {}),
+      });
+      assert.ok(page.content.length <= 8000);
+      assert.equal(page.offset, offset);
+      expectedHash ??= page.contentHash;
+      assert.equal(page.contentHash, expectedHash);
+      content += page.content;
+      offset = page.nextOffset;
+    } while (offset !== null);
+    assert.equal(content, text);
+    assert.equal(expectedHash, hashInput(text));
+    const eof = await call({
+      path: "large.txt",
+      offset: text.length,
+      expectedHash: expectedHash.toUpperCase(),
+    });
+    assert.equal(eof.content, "");
+    assert.equal(eof.nextOffset, null);
+    assert.equal(eof.partial, true);
+    for (const args of [
+      { offset: null },
+      { maxChars: null },
+      { expectedHash: null },
+      { offset: -1 },
+      { offset: text.length + 1 },
+      { offset: 1.5 },
+      { maxChars: 0 },
+      { maxChars: 12001 },
+      { expectedHash: "wrong" },
+    ])
+      await assert.rejects(
+        call({ path: "large.txt", ...args }),
+        /参数|范围|哈希/,
+      );
+    await writeFile(path.join(project, "large.txt"), text + "changed");
+    await assert.rejects(
+      call({ path: "large.txt", offset: 8000, expectedHash }),
+      /已变化/,
+    );
+    await writeFile(path.join(project, "limit.txt"), "a".repeat(1024 * 1024));
+    const limit = await call({ path: "limit.txt", offset: 0, maxChars: 12000 });
+    assert.equal(limit.content.length, 12000);
+    assert.equal(limit.nextOffset, 12000);
+    await writeFile(
+      path.join(project, "limit.txt"),
+      "a".repeat(1024 * 1024 + 1),
+    );
+    await assert.rejects(call({ path: "limit.txt", offset: 0 }), /1MB/);
+    await writeFile(
+      path.join(project, "binary.txt"),
+      Buffer.concat([Buffer.from(text), Buffer.from([0])]),
+    );
+    await assert.rejects(call({ path: "binary.txt", offset: 0 }), /文本/);
+    await writeFile(
+      path.join(project, "invalid.txt"),
+      Buffer.from([0xff, 0xfe]),
+    );
+    await assert.rejects(call({ path: "invalid.txt", offset: 0 }), /文本/);
+    await mkdir(path.join(project, ".talkwithpeer"));
+    await writeFile(path.join(project, ".talkwithpeer/private.txt"), "fixture");
+    await writeFile(path.join(project, ".env"), "fixture");
+    await symlink(
+      path.join(project, ".env"),
+      path.join(project, "credential-alias.txt"),
+    );
+    for (const filename of [
+      ".env",
+      "credential-alias.txt",
+      ".talkwithpeer/private.txt",
+      "../state.sqlite",
+    ])
+      await assert.rejects(
+        call({ path: filename, offset: 0 }),
+        /凭证|私有|项目外/,
+      );
+    assert.equal(
+      (await s.extensions.snapshot()).locks[0].contentHash,
+      tool.contentHash,
+    );
+  } finally {
+    await s.close();
+  }
+});
 test("symlinks, script files and task-rewriting hooks are never executable packages", async () => {
   const s = await setup();
   try {
