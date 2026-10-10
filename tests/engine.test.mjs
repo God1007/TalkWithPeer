@@ -218,7 +218,7 @@ test("abort reasons survive adapters in both stages without inventing votes", as
     return originalTimeout(callback, ms, ...args);
   });
   for (const phase of ["opinion", "judgment"])
-    for (const mode of ["timeout", "user", "secret", "provider"]) {
+    for (const mode of ["timeout", "user", "secret", "default", "provider"]) {
       const store = new Store(":memory:"),
         c = store.createConversation();
       store.addMember(c.id, {
@@ -280,6 +280,11 @@ test("abort reasons survive adapters in both stages without inventing votes", as
             );
           expected = "cause [已隐藏凭证]";
           code = "fixture_abort";
+        } else if (mode === "default") {
+          const control = engine.active.get(c.id);
+          control.abort();
+          expected = control.signal.reason.message;
+          code = control.signal.reason.code;
         } else {
           expected = "provider original failure";
           code = "provider_failure";
@@ -306,6 +311,14 @@ test("abort reasons survive adapters in both stages without inventing votes", as
             ),
         );
         assert.equal(store.conversation(c.id).status, "paused");
+        assert.equal(store.conversation(c.id).result, null);
+        assert.equal(
+          store
+            .messages(c.id)
+            .filter((m) => m.kind === "judgment" && m.status === "complete")
+            .length,
+          0,
+        );
         if (mode !== "provider")
           assert.equal(store.conversation(c.id).pauseReason, expected);
         assert.equal(
@@ -320,4 +333,55 @@ test("abort reasons survive adapters in both stages without inventing votes", as
         store.close();
       }
     }
+});
+test("cancellation during input measurement preserves cause before any model reply", async () => {
+  const store = new Store(":memory:"),
+    c = store.createConversation();
+  store.addMember(c.id, {
+    name: "fixture",
+    providerId: "fixture",
+    model: "model",
+    parameters: {},
+  });
+  let ready;
+  const started = new Promise((r) => (ready = r));
+  let calls = 0;
+  const registry = {
+    validateMember() {},
+    closeMember() {},
+    async driver() {
+      return {
+        async countTokens(_prompt, signal) {
+          ready();
+          await new Promise((r) =>
+            signal.addEventListener("abort", r, { once: true }),
+          );
+          throw new Error("counter lost reason");
+        },
+        async run() {
+          calls++;
+          throw new Error("must not run");
+        },
+      };
+    },
+  };
+  const engine = new DiscussionEngine(store, registry);
+  try {
+    const task = engine.start(c.id, "fixture");
+    await started;
+    engine.active
+      .get(c.id)
+      .abort(new Error("measure token=sk-measure-sensitive-value"));
+    await task;
+    assert.equal(store.conversation(c.id).pauseReason, "measure [已隐藏凭证]");
+    assert.equal(calls, 0);
+    assert.equal(store.requests(c.id).length, 0);
+    assert.equal(store.conversation(c.id).result, null);
+    assert.ok(
+      !JSON.stringify(store.logs()).includes("sk-measure-sensitive-value"),
+    );
+  } finally {
+    await engine.close();
+    store.close();
+  }
 });
