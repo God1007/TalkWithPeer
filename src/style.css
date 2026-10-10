@@ -638,6 +638,32 @@ button:active:not(:disabled) {
   align-items: center;
   justify-content: space-between;
 }
+.document-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.document-import textarea {
+  min-height: 240px;
+  line-height: 1.6;
+}
+.document-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.document-note {
+  padding: 10px 0;
+}
+.document-note summary {
+  overflow-wrap: anywhere;
+}
+.document-note pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+}
 .round-control {
   display: flex;
   gap: 7px;

@@ -24,10 +24,12 @@ import {
   WarningCircle,
   CheckCircle,
   GitBranch,
+  Paperclip,
 } from "@phosphor-icons/react";
 import "./style.css";
 import { API_PRESETS } from "../shared/api-presets.mjs";
 import ExtensionManager from "./extensions.jsx";
+import DocumentImport from "./document-import.jsx";
 
 const effortLabels = {
   auto: "自动",
@@ -929,6 +931,20 @@ function ContextPanel({
         </article>
       </div>
       <details className="runtime-section">
+        <summary>共享资料与 memo · {data.state.notes.filter(n => !n.memberId).length} 条</summary>
+        {data.state.notes.filter(n => !n.memberId).map(note => (
+          <details className="document-note" key={note.id}>
+            <summary>{note.text.split("\n")[0]}</summary>
+            <pre>{note.text}</pre>
+            <button className="text-button" disabled={running || busy}
+              onClick={() => perform(() => api("/conversations/" + conversationId + "/memo/" + note.id,"DELETE",{}))}>
+              移除这条共享资料
+            </button>
+          </details>
+        ))}
+        {!data.state.notes.some(n => !n.memberId) && <p className="empty-small">暂无共享资料；可在输入框下方导入文件。</p>}
+      </details>
+      <details className="runtime-section">
         <summary>目标与固定约束</summary>
         <p className="subtle">
           原始用户指令在压缩后仍保留。此处的固定约束由用户管理，模型摘要不能修改。
@@ -1305,6 +1321,7 @@ function App() {
     return () => clearInterval(timer);
   }, [bootstrap.discovering, connected, boot]);
   useEffect(() => {
+    setModal(null);
     if (!id || !connected) {
       setWorkspace(null);
       return;
@@ -1873,6 +1890,10 @@ function App() {
                       rows={2}
                     />
                     <div className="composer-controls">
+                      <button className="text-button document-button" type="button" disabled={!id || running}
+                        onClick={() => setModal({type:"document",conversationId:id})}>
+                        <Paperclip size={16} /> 导入文件
+                      </button>
                       <label className="round-control">
                         判断轮数
                         <select
@@ -1985,11 +2006,20 @@ function App() {
               members: "参与者",
               trace: modal.member?.name,
               rename: "重命名会话",
+              document: "导入简历 / 资料",
             }[modal.type]
           }
           onClose={closeModal}
-          wide={["trace", "pets", "members", "extensions"].includes(modal.type)}
+          wide={["trace", "pets", "members", "extensions", "document"].includes(modal.type)}
         >
+          {modal.type === "document" && (
+            <DocumentImport running={running} onClose={closeModal} onSave={async (memo) => {
+              const target = modal.conversationId;
+              await api("/conversations/" + target + "/memo","POST",{text:memo});
+              await load(target);
+              if (selectedId.current === target) setView("context");
+            }} />
+          )}
           {modal.type === "agent" && (
             <AgentForm
               providers={bootstrap.providers}
