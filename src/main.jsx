@@ -25,11 +25,13 @@ import {
   CheckCircle,
   GitBranch,
   Paperclip,
+  FileText,
 } from "@phosphor-icons/react";
 import "./style.css";
 import { API_PRESETS } from "../shared/api-presets.mjs";
 import ExtensionManager from "./extensions.jsx";
 import DocumentImport from "./document-import.jsx";
+import {importedDocuments} from "../shared/document-import.mjs";
 
 const effortLabels = {
   auto: "自动",
@@ -1261,6 +1263,42 @@ function TraceView({ detail, member, pet }) {
     </>
   );
 }
+function ImportedFiles({conversationId,revision,running,onChange}) {
+  const [files,setFiles] = useState([]);
+  const [expanded,setExpanded] = useState(null);
+  const [removing,setRemoving] = useState(null);
+  const [error,setError] = useState(null);
+  useEffect(() => {
+    let live = true;
+    api("/conversations/" + conversationId + "/context")
+      .then(data => {if(live) {setFiles(importedDocuments(data.state.notes)); setError(null);}})
+      .catch(e => {if(live)setError(e.message);});
+    return () => {live = false;};
+  },[conversationId,revision]);
+  return <section className="imported-files" aria-label="已导入文件">
+    <ErrorLine error={error} />
+    {files.map(file => <article className="imported-file" key={file.id}>
+      <div className="imported-file-row">
+        <button className="imported-file-name" type="button" title={file.name}
+          aria-label={"查看文件 " + file.name} aria-expanded={expanded === file.id}
+          onClick={() => setExpanded(expanded === file.id ? null : file.id)}>
+          <FileText size={16} aria-hidden="true" /><span>{file.name}</span>
+        </button>
+        <IconButton label={"移除文件 " + file.name} disabled={running || Boolean(removing)} onClick={async () => {
+          if(running || removing)return;
+          setRemoving(file.id); setError(null);
+          try {
+            await api("/conversations/" + conversationId + "/memo/" + file.id,"DELETE",{});
+            setFiles(old => old.filter(item => item.id !== file.id));
+            await onChange();
+          } catch(e) {setError(e.message);}
+          finally {setRemoving(null);}
+        }}><X size={15} /></IconButton>
+      </div>
+      {expanded === file.id && <pre className="imported-file-preview">{file.text}</pre>}
+    </article>)}
+  </section>;
+}
 function App() {
   const [bootstrap, setBootstrap] = useState({
     conversations: [],
@@ -1823,6 +1861,10 @@ function App() {
               </div>
               <div className="composer-area">
                 <ErrorLine error={error} />
+                {id && view === "discussion" && (
+                  <ImportedFiles key={id} conversationId={id} revision={current?.contextVersion}
+                    running={running} onChange={() => load(id)} />
+                )}
                 {id && (
                   <div className="member-strip">
                     {members.map((member) => (
@@ -2017,7 +2059,6 @@ function App() {
               const target = modal.conversationId;
               await api("/conversations/" + target + "/memo","POST",{text:memo});
               await load(target);
-              if (selectedId.current === target) setView("context");
             }} />
           )}
           {modal.type === "agent" && (

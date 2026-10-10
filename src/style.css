@@ -643,6 +643,65 @@ button:active:not(:disabled) {
   align-items: center;
   gap: 5px;
 }
+.imported-files {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.imported-files:empty {
+  display: none;
+}
+.imported-file {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faff;
+  margin-bottom: 4px;
+}
+.imported-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 7px;
+}
+.imported-file-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  min-height: 38px;
+  border: 0;
+  background: transparent;
+  color: #44536b;
+  font-size: 13px;
+  text-align: left;
+}
+.imported-file-name svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.imported-file-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.imported-file-row .icon-button {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+}
+.imported-file-preview {
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px 14px;
+  margin: 0;
+  border-top: 1px solid var(--line);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+}
 .document-import textarea {
   min-height: 240px;
   line-height: 1.6;

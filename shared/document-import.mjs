@@ -32,3 +32,12 @@ export function documentMemo(document, text) {
     throw new Error("共享记录最多 8000 字（含来源）；请精简预览文字后导入，内容不会自动截断。");
   return memo;
 }
+
+export function importedDocuments(notes) {
+  return notes.filter(note => !note.memberId && typeof note.text === "string")
+    .flatMap(note => {
+      const [title,hash] = note.text.split("\n",2);
+      if (!title.startsWith("用户导入文件：") || !/^原文件 SHA-256：[a-f0-9]{64}$/.test(hash ?? "")) return [];
+      return [{id:note.id,name:title.slice("用户导入文件：".length),text:note.text}];
+    });
+}

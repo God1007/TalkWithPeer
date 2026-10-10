@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validateDocument, decodeDocumentText, documentMemo } from "../shared/document-import.mjs";
+import { validateDocument, decodeDocumentText, documentMemo, importedDocuments } from "../shared/document-import.mjs";
 import {mkdtemp,rm} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -33,6 +33,19 @@ test("confirmed memo identifies the source file while preserving user-corrected 
   const prefix = documentMemo(document,"x").length-1;
   assert.equal(documentMemo(document,"中".repeat(8000-prefix)).length,8000);
   assert.throws(() => documentMemo(document,"中".repeat(8001-prefix)), /8000/);
+});
+
+test("conversation file list identifies existing imported files without exposing private or ordinary memos", () => {
+  const source = {name:"简历.pdf",hash:"a".repeat(64)};
+  const text = documentMemo(source,"履历文字");
+  const notes = [
+    {id:"file",memberId:null,text},
+    {id:"private",memberId:"peer",text},
+    {id:"ordinary",text:"保持会话原有要求"},
+    {id:"label-only",text:"用户导入文件：不是实际导入\n备注"}
+  ];
+  assert.deepEqual(importedDocuments(notes),[{id:"file",name:"简历.pdf",text}]);
+  assert.equal(notes.length,4);
 });
 
 test("confirmed resume is saved once, shared with every member, survives project changes and stays in its conversation", async () => {
