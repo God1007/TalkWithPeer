@@ -386,11 +386,12 @@ test("terminal and HTTP share extension approval, exact source view and executio
     s.store.addMessage(terminal.id, { author: "user", content: "两  个空格" });
     await terminal.execute("/ext call " + search.id + ' {"query":"两  个"}');
     assert.ok(output.some((line) => line.includes("两  个空格")));
-    await terminal.execute("/ext runs");
+    await assert.rejects(terminal.execute("/ext runs"), /未知扩展命令/);
+    assert.equal((await connection.request("/extensions")).runs, undefined);
     assert.ok(
-      (await connection.request("/extensions")).runs.some(
-        (r) => r.extensionId === search.id && r.status === "complete",
-      ),
+      app.store
+        .extensionRuns(terminal.id)
+        .some((r) => r.extensionId === search.id && r.status === "complete"),
     );
     app.engine.active.set(terminal.id, new AbortController());
     await assert.rejects(terminal.execute("/ext disable " + search.id), /暂停/);

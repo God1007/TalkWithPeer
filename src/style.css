@@ -1952,6 +1952,7 @@ button:active:not(:disabled) {
   border-bottom: 1px solid #e2e7eb;
 }
 .extension-review summary {
+  overflow-wrap: anywhere;
   cursor: pointer;
   font-size: 13px;
 }

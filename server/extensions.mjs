@@ -5,6 +5,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
+import { referenceFiles } from "./reference-files.mjs";
 const digest = (value) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const events = [
@@ -15,6 +16,16 @@ const events = [
   "after_compact",
 ];
 const operations = {
+  extension_read: {
+    description: "分段读取已审查并授权的扩展资料，源码仅作文本，不执行",
+    arguments: {
+      extensionId: "本轮资料扩展ID",
+      path: "审查清单中的精确文件路径",
+      offset: "可选字符偏移，默认0",
+      maxChars: "可选1–12000，默认8000",
+    },
+    capability: "extension-reference.read",
+  },
   public_read: {
     description: "回取本会话已完成的公共消息",
     arguments: { messageIds: "1–3个公共消息ID" },
@@ -118,7 +129,7 @@ export class ExtensionRegistry {
       !manifest ||
       manifest.schemaVersion !== 1 ||
       !/^[a-z][a-z0-9-]{0,63}$/.test(manifest.id ?? "") ||
-      !["skill", "tool", "hook"].includes(manifest.type) ||
+      !["skill", "tool", "hook", "reference"].includes(manifest.type) ||
       typeof manifest.name !== "string" ||
       !manifest.name.trim() ||
       manifest.name.length > 80 ||
@@ -130,12 +141,20 @@ export class ExtensionRegistry {
       throw new Error("extension.json 格式无效。");
     const entry = files.find((f) => f.path === manifest.entry);
     if (!entry) throw new Error("扩展入口不在包内。");
+    if (manifest.sources !== undefined) {
+      if (manifest.type !== "reference")
+        throw new Error("归档源只允许用于只读资料包。");
+      files.push(...(await referenceFiles(library, manifest.sources)));
+    }
     let definition = null,
       capability;
-    if (manifest.type === "skill") {
+    if (manifest.type === "skill" || manifest.type === "reference") {
       if (path.extname(entry.path) !== ".md" || entry.content.length > 8000)
-        throw new Error("Skill 入口应为不超过8000字的 Markdown。");
-      capability = "context.workflow";
+        throw new Error("工作流程或资料入口应为不超过8000字的 Markdown。");
+      capability =
+        manifest.type === "reference"
+          ? "reference.read-only"
+          : "context.workflow";
     } else {
       definition = JSON.parse(entry.content);
       if (
@@ -204,7 +223,7 @@ export class ExtensionRegistry {
           })
         ).stdout.trim();
       } catch {}
-      for (const kind of ["skills", "tools", "hooks"]) {
+      for (const kind of ["skills", "tools", "hooks", "references"]) {
         const directory = path.join(library.root, kind);
         try {
           const info = await lstat(directory);
@@ -392,6 +411,21 @@ export class ExtensionRegistry {
           text: p.definition.text,
           authoritative: false,
         })),
+      references: enabled
+        .filter((p) => p.manifest.type === "reference")
+        .map((p) => ({
+          id: p.id,
+          name: p.manifest.name,
+          description: p.manifest.description,
+          contentHash: p.contentHash,
+          readOnly: true,
+          files: p.files.map((f) => ({
+            path: f.path,
+            size: f.size,
+            encoding: f.encoding,
+            redacted: f.redacted,
+          })),
+        })),
     };
   }
   verifyLocks(packages, locks) {
@@ -475,7 +509,52 @@ export class ExtensionRegistry {
       const c = this.store.conversation(scope.conversationId);
       if (!c) throw new Error("会话不存在。");
       let result;
-      if (item.definition.operation === "public_read") {
+      if (item.definition.operation === "extension_read") {
+        if (
+          Object.keys(args).some(
+            (k) => !["extensionId", "path", "offset", "maxChars"].includes(k),
+          ) ||
+          typeof args.extensionId !== "string" ||
+          typeof args.path !== "string"
+        )
+          throw new Error("资料参数无效。");
+        const target = await this.find(args.extensionId);
+        if (
+          !target.enabled ||
+          target.manifest.type !== "reference" ||
+          !locks.some(
+            (l) => l.id === target.id && l.contentHash === target.contentHash,
+          )
+        )
+          throw new Error("资料未授权或不在本轮锁定清单内。");
+        const file = target.files.find((f) => f.path === args.path);
+        if (!file || ["binary", "symlink"].includes(file.encoding))
+          throw new Error("资料不存在或不是可读文本。");
+        const offset = args.offset ?? 0,
+          maxChars = args.maxChars ?? 8000;
+        if (
+          !Number.isSafeInteger(offset) ||
+          offset < 0 ||
+          offset > file.content.length ||
+          !Number.isInteger(maxChars) ||
+          maxChars < 1 ||
+          maxChars > 12000
+        )
+          throw new Error("资料读取范围无效。");
+        const end = Math.min(file.content.length, offset + maxChars);
+        result = {
+          extensionId: target.id,
+          path: file.path,
+          contentHash: target.contentHash,
+          fileHash: file.sha256,
+          content: file.content.slice(offset, end),
+          offset,
+          nextOffset: end < file.content.length ? end : null,
+          partial: offset > 0 || end < file.content.length,
+          redacted: Boolean(file.redacted),
+          readOnly: true,
+        };
+      } else if (item.definition.operation === "public_read") {
         if (Object.keys(args).some((k) => k !== "messageIds"))
           throw new Error("工具参数无效。");
         result = this.context.readEvidence(c.id, args.messageIds);

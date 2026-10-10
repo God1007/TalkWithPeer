@@ -306,7 +306,8 @@ export async function createApp({
         return;
       }
       if (url.pathname === "/api/extensions" && req.method === "GET") {
-        json(res, 200, await extensions.scan());
+        const { runs, ...catalog } = await extensions.scan();
+        json(res, 200, catalog);
         return;
       }
       if (

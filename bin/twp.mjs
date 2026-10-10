@@ -6,7 +6,7 @@ import { realpathSync } from "node:fs";
 import { safeError } from "../server/native-adapters.mjs";
 
 export const commands = {
-  ext: "[add <仓库路径>|list|review <编号>|approve <编号> <哈希> [备注]|enable <编号> <哈希>|disable <编号>|call <编号> <JSON参数>|runs] 管理本机扩展",
+  ext: "[add <仓库路径>|list|review <编号>|approve <编号> <哈希> [备注]|enable <编号> <哈希>|disable <编号>|call <编号> <JSON参数>] 管理本机扩展",
   help: "命令列表",
   choose: "[连接编号或ID,...] 列出或添加 Agent；无参数时可输入编号选择",
   agents: "当前参与者",
@@ -273,8 +273,8 @@ export class Terminal {
         data.errors.forEach((e) => this.write(e.path + "：" + e.error));
         return;
       }
-      if (args[0] === "runs")
-        return this.write(JSON.stringify(data.runs, null, 2));
+      if (!["review", "approve", "enable", "disable", "call"].includes(args[0]))
+        throw new Error("未知扩展命令。");
       const item =
         data.packages[Number(args[1]) - 1] ??
         data.packages.find((p) => p.id === args[1]);
@@ -298,15 +298,23 @@ export class Terminal {
           this.write(
             "\n[" +
               file.path +
+              (file.redacted ? " · 凭证已脱敏" : "") +
+              (["binary", "symlink"].includes(file.encoding)
+                ? " · 仅元数据"
+                : "") +
               (old
-                ? old.content === file.content
+                ? old.content === file.content && old.sha256 === file.sha256
                   ? " · 未变更"
                   : " · 已变更"
                 : " · 新文件") +
               "]\n" +
               file.content,
           );
-          if (old && old.content !== file.content)
+          if (file.sha256) this.write("原始文件 SHA-256：" + file.sha256);
+          if (
+            old &&
+            (old.content !== file.content || old.sha256 !== file.sha256)
+          )
             this.write("\n[上次审查版本]\n" + old.content);
         }
         previousFiles

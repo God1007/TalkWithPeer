@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 export default function ExtensionManager({ running, api }) {
   const [data, setData] = useState(null),
     [directory, setDirectory] = useState(""),
+    [libraryFilter, setLibraryFilter] = useState(""),
+    [query, setQuery] = useState(""),
     [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null),
     [note, setNote] = useState(""),
@@ -27,11 +29,18 @@ export default function ExtensionManager({ running, api }) {
       setBusy(false);
     }
   };
+  const visiblePackages = data?.packages.filter(
+    (p) =>
+      (!libraryFilter || p.libraryId === libraryFilter) &&
+      (p.manifest.name + " " + p.manifest.id + " " + p.manifest.description)
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+  );
   return (
     <div className="extension-manager">
       <p className="subtle">
         本机源文件经审查后锁定哈希，默认不启用。文件改变后须重新审查；一期只执行平台声明的只读工具和
-        hook 操作。
+        hook 操作。 资料包只供审查，原插件命令和 MCP 不会被激活。
       </p>
       <form
         onSubmit={(e) => {
@@ -71,7 +80,31 @@ export default function ExtensionManager({ running, api }) {
         ))}
       </div>
       <div className="extension-grid">
-        {data?.packages.map((p) => (
+        <label className="field">
+          筛选扩展库
+          <select
+            value={libraryFilter}
+            onChange={(e) => setLibraryFilter(e.target.value)}
+          >
+            <option value="">全部扩展库</option>
+            {data?.libraries.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          搜索扩展
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="名称、ID 或说明"
+          />
+        </label>
+      </div>
+      <div className="extension-grid">
+        {visiblePackages?.map((p) => (
           <article className="runtime-section" key={p.id}>
             <div className="pane-heading">
               <strong>{p.manifest.name}</strong>
@@ -88,7 +121,14 @@ export default function ExtensionManager({ running, api }) {
                   unavailable: "源文件不可用",
                 }[p.status]
               }{" "}
-              · {p.enabled ? "已启用" : "未启用"}
+              ·{" "}
+              {p.manifest.type === "reference"
+                ? p.enabled
+                  ? "已授权只读"
+                  : "未授权"
+                : p.enabled
+                  ? "已启用"
+                  : "未启用"}
             </p>
             <code className="request-hash">{p.contentHash}</code>
             <button
@@ -120,7 +160,11 @@ export default function ExtensionManager({ running, api }) {
                 )
               }
             >
-              {p.activeLock ? "停用" : "启用锁定版本"}
+              {p.activeLock
+                ? "停用"
+                : p.manifest.type === "reference"
+                  ? "授权只读资料"
+                  : "启用锁定版本"}
             </button>
           </article>
         ))}
@@ -149,20 +193,34 @@ export default function ExtensionManager({ running, api }) {
             return (
               <details key={file.path} open={file.path === "extension.json"}>
                 <summary>
-                  {file.path} ·{" "}
+                  {file.path} · {file.redacted && "凭证已脱敏 · "}
+                  {["binary", "symlink"].includes(file.encoding) &&
+                    "仅元数据 · "}
                   {old
-                    ? old.content === file.content
+                    ? old.content === file.content && old.sha256 === file.sha256
                       ? "未变更"
                       : "已变更"
                     : "新文件"}
                 </summary>
-                <pre>{file.content}</pre>
-                {old && old.content !== file.content && (
-                  <>
-                    <h4>上次审查内容</h4>
-                    <pre>{old.content}</pre>
-                  </>
+                {file.sha256 && (
+                  <code className="request-hash">
+                    原始文件 SHA-256：{file.sha256}
+                  </code>
                 )}
+                <pre>{file.content}</pre>
+                {old &&
+                  (old.content !== file.content ||
+                    old.sha256 !== file.sha256) && (
+                    <>
+                      <h4>上次审查内容</h4>
+                      {old.sha256 && (
+                        <code className="request-hash">
+                          原始文件 SHA-256：{old.sha256}
+                        </code>
+                      )}
+                      <pre>{old.content}</pre>
+                    </>
+                  )}
               </details>
             );
           })}
@@ -215,22 +273,6 @@ export default function ExtensionManager({ running, api }) {
           ))}
         </div>
       )}
-      <details className="runtime-section" open>
-        <summary>执行记录 · {data?.runs.length ?? 0}</summary>
-        {data?.runs.slice(0, 30).map((r) => (
-          <article key={r.id}>
-            <strong>
-              {data.packages.find((p) => p.id === r.extensionId)?.manifest
-                .name ?? r.extensionId}
-            </strong>
-            <p className="subtle">
-              {r.event ?? "tool"} · {r.status} ·{" "}
-              {new Date(r.createdAt).toLocaleString()} {r.error ?? ""}
-            </p>
-            <code className="request-hash">{r.contentHash}</code>
-          </article>
-        ))}
-      </details>
       {error && <p role="alert">{error}</p>}
     </div>
   );
