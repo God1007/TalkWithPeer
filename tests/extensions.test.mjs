@@ -307,6 +307,24 @@ test("shared runtime injects reviewed skills, runs hooks and bounds extension to
       2,
     );
     assert.ok(s.store.requests(c.id).some((r) => r.status === "tool-request"));
+    const toolRun = s.store.extensionRuns(c.id).find((r) => r.type === "tool");
+    const chain = s.store.logs({ requestId: toolRun.requestId }).logs;
+    assert.ok(
+      chain.some((r) => r.category === "model" && r.status === "tool-request"),
+    );
+    assert.ok(
+      chain.some(
+        (r) =>
+          r.executionId === toolRun.id &&
+          r.status === "complete" &&
+          r.durationMs >= 0,
+      ),
+    );
+    assert.ok(
+      s.store
+        .logs({ conversationId: c.id })
+        .logs.some((r) => r.event === "after_reply" && r.requestId),
+    );
     registry.driver = async () => ({
       run: async () => ({
         text: JSON.stringify({

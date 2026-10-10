@@ -69,6 +69,12 @@ export class ExtensionRegistry {
     };
     state.libraries.push(library);
     this.save(state);
+    this.store.log({
+      category: "extension",
+      action: "library.added",
+      libraryId: library.id,
+      message: "登记本机扩展库",
+    });
     return library;
   }
   async package(library, folder) {
@@ -304,6 +310,14 @@ export class ExtensionRegistry {
     };
     this.store.saveSetting("extension-snapshot:" + contentHash, item);
     this.save(state);
+    this.store.log({
+      category: "extension",
+      action: "review.approved",
+      extensionId: id,
+      contentHash,
+      version: item.manifest.version,
+      message: "批准扩展内容",
+    });
     return state.reviews[id];
   }
   async enable(id, enabled, contentHash) {
@@ -312,6 +326,12 @@ export class ExtensionRegistry {
     if (!enabled && (state.reviews[id] || state.enabled[id])) {
       state.enabled[id] = null;
       this.save(state);
+      this.store.log({
+        category: "extension",
+        action: "version.disabled",
+        extensionId: id,
+        message: "停用扩展版本",
+      });
       return { enabled: false };
     }
     const item = await this.find(id);
@@ -319,6 +339,14 @@ export class ExtensionRegistry {
       throw new Error("启用前须审查当前内容并锁定哈希。");
     state.enabled[id] = enabled ? item.contentHash : null;
     this.save(state);
+    this.store.log({
+      category: "extension",
+      action: enabled ? "version.enabled" : "version.disabled",
+      extensionId: id,
+      contentHash: item.contentHash,
+      version: item.manifest.version,
+      message: enabled ? "启用锁定扩展版本" : "停用扩展版本",
+    });
     return { enabled };
   }
   async snapshot() {
@@ -442,7 +470,8 @@ export class ExtensionRegistry {
       if (signal?.aborted) throw signal.reason ?? new Error("执行已取消。");
       if (!args || typeof args !== "object" || Array.isArray(args))
         throw new Error("工具参数须为JSON对象。");
-      await this.hooks("before_tool", scope, signal, locks, id);
+      const hookScope = { ...scope, parentExecutionId: record.id };
+      await this.hooks("before_tool", hookScope, signal, locks, id);
       const c = this.store.conversation(scope.conversationId);
       if (!c) throw new Error("会话不存在。");
       let result;
@@ -507,7 +536,7 @@ export class ExtensionRegistry {
       if (signal?.aborted) throw signal.reason ?? new Error("执行已取消。");
       if (JSON.stringify(result).length > 100000)
         throw new Error("工具结果过大，请缩小读取范围。");
-      await this.hooks("after_tool", scope, signal, locks, id);
+      await this.hooks("after_tool", hookScope, signal, locks, id);
       Object.assign(record, { status: "complete", resultHash: digest(result) });
       return {
         executionId: record.id,

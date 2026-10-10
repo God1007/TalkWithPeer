@@ -28,6 +28,7 @@ import {
 import "./style.css";
 import { API_PRESETS } from "../shared/api-presets.mjs";
 import ExtensionManager from "./extensions.jsx";
+import RuntimeLogs from "./logs.jsx";
 
 const effortLabels = {
   auto: "自动",
@@ -56,10 +57,12 @@ const stateLabels = {
 async function api(url, method = "GET", body) {
   const response = await fetch("/api" + url, {
     method,
-    headers:
-      method === "GET"
-        ? undefined
-        : { "Content-Type": "application/json", "X-TWP": "1" },
+    headers: {
+      "X-TWP-Client": "web",
+      ...(method === "GET"
+        ? {}
+        : { "Content-Type": "application/json", "X-TWP": "1" }),
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let value;
@@ -1979,6 +1982,7 @@ function App() {
               pets: "Pets",
               connect: "添加连接",
               extensions: "本机扩展库",
+              logs: "后台日志",
               settings: "设置",
               members: "参与者",
               trace: modal.member?.name,
@@ -1986,7 +1990,9 @@ function App() {
             }[modal.type]
           }
           onClose={closeModal}
-          wide={["trace", "pets", "members", "extensions"].includes(modal.type)}
+          wide={["trace", "pets", "members", "extensions", "logs"].includes(
+            modal.type,
+          )}
         >
           {modal.type === "agent" && (
             <AgentForm
@@ -2032,6 +2038,9 @@ function App() {
           {modal.type === "extensions" && (
             <ExtensionManager running={running} api={api} />
           )}
+          {modal.type === "logs" && (
+            <RuntimeLogs api={api} conversationId={id} />
+          )}
           {modal.type === "connect" && (
             <ConnectionForm
               onClose={closeModal}
@@ -2046,6 +2055,13 @@ function App() {
           )}
           {modal.type === "settings" && (
             <>
+              <button
+                className="button secondary full-width"
+                onClick={() => setModal({ type: "logs" })}
+              >
+                查看后台日志
+              </button>
+              <div className="settings-divider" />
               <div className="settings-heading">
                 <h3>扩展</h3>
               </div>

@@ -464,6 +464,7 @@ export class DiscussionEngine extends EventEmitter {
             {
               conversationId: id,
               memberId: member.id,
+              requestId: record.id,
               projectPath: snapshot.project,
             },
             control.signal,
@@ -509,7 +510,7 @@ export class DiscussionEngine extends EventEmitter {
         if (this.extensions)
           await this.extensions.hooks(
             "after_reply",
-            { conversationId: id, memberId: member.id },
+            { conversationId: id, memberId: member.id, requestId: record.id },
             control.signal,
             input.extensions.locks,
           );

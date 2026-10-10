@@ -41,6 +41,7 @@ export async function createApp({
   engine.extensions = extensions;
   const pets = new PetLibrary(store, path.join(root, "pets"));
   const tokens = new Set();
+  let loggingOpen = true;
   let discovering = true;
   const refresh = () =>
     registry.refresh().finally(() => {
@@ -73,6 +74,74 @@ export async function createApp({
     engine.update(id);
   };
   const server = http.createServer(async (req, res) => {
+    const httpRequestId = randomUUID(),
+      startedAt = Date.now();
+    res.setHeader("X-Request-ID", httpRequestId);
+    let recorded = false;
+    const recordHttp = (aborted = false) => {
+      if (recorded || !loggingOpen) return;
+      recorded = true;
+      const pathname = (req.url ?? "").split("?")[0];
+      const statusCode = aborted ? 499 : res.statusCode;
+      if (
+        (req.method === "GET" && statusCode < 400) ||
+        (pathname === "/api/session" && statusCode < 400) ||
+        (aborted && pathname.endsWith("/stream"))
+      )
+        return;
+      const known = new Set([
+        "api",
+        "bootstrap",
+        "health",
+        "session",
+        "providers",
+        "refresh",
+        "extensions",
+        "libraries",
+        "review",
+        "enable",
+        "call",
+        "pets",
+        "codex",
+        "import",
+        "projects",
+        "conversations",
+        "members",
+        "context",
+        "task",
+        "evidence",
+        "requests",
+        "memo",
+        "compact",
+        "discuss",
+        "continue",
+        "stop",
+        "stream",
+        "logs",
+      ]);
+      const parts = pathname.split("/");
+      store.log({
+        category: "http",
+        action: aborted ? "request.aborted" : "request.finished",
+        httpRequestId,
+        method: req.method,
+        route: parts.map((p) => (known.has(p) ? p : p ? ":id" : "")).join("/"),
+        conversationId:
+          parts[2] === "conversations" && /^[a-f0-9-]{36}$/.test(parts[3] ?? "")
+            ? parts[3]
+            : undefined,
+        client: ["cli", "web"].includes(req.headers["x-twp-client"])
+          ? req.headers["x-twp-client"]
+          : "local",
+        statusCode,
+        durationMs: Date.now() - startedAt,
+        level:
+          statusCode >= 500 ? "error" : statusCode >= 400 ? "warn" : "info",
+        message: statusCode >= 400 ? "HTTP 请求未成功" : "HTTP 写请求完成",
+      });
+    };
+    res.once("finish", () => recordHttp());
+    res.once("close", () => recordHttp(!res.writableFinished));
     const port = server.address().port;
     const hosts = ["127.0.0.1:" + port, "localhost:" + port];
     res.setHeader("Cache-Control", "no-store");
@@ -230,6 +299,22 @@ export async function createApp({
           home: os.homedir(),
           local: true,
         });
+        return;
+      }
+      if (url.pathname === "/api/logs" && req.method === "GET") {
+        const q = url.searchParams;
+        json(
+          res,
+          200,
+          store.logs({
+            before: q.has("before") ? Number(q.get("before")) : null,
+            limit: q.has("limit") ? Number(q.get("limit")) : 50,
+            category: q.get("category"),
+            level: q.get("level"),
+            conversationId: q.get("conversationId"),
+            requestId: q.get("requestId"),
+          }),
+        );
         return;
       }
       if (url.pathname === "/api/providers/refresh" && req.method === "POST") {
@@ -634,6 +719,23 @@ export async function createApp({
       json(res, 400, { error: safeError(error) });
     }
   });
+  server.once("listening", () =>
+    store.log({
+      category: "service",
+      action: "server.started",
+      port: server.address().port,
+      message: "本机服务已启动",
+    }),
+  );
+  server.on("error", (error) =>
+    store.log({
+      category: "service",
+      action: "server.error",
+      level: "error",
+      errorCode: error.code,
+      message: "本机服务错误",
+    }),
+  );
   return {
     server,
     store,
@@ -646,6 +748,12 @@ export async function createApp({
       registry.close();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
+      store.log({
+        category: "service",
+        action: "server.stopped",
+        message: "本机服务已停止",
+      });
+      loggingOpen = false;
       store.close();
     },
   };

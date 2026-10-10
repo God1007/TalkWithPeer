@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { safeError } from "./native-adapters.mjs";
 
 const parse = (row) => (row ? JSON.parse(row.data) : null);
 export class Store {
@@ -9,6 +10,7 @@ export class Store {
     if (filename !== ":memory:")
       mkdirSync(path.dirname(filename), { recursive: true });
     this.db = new DatabaseSync(filename);
+    this.serviceId = randomUUID();
     this.db.exec(
       "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
     );
@@ -22,9 +24,34 @@ export class Store {
         "CREATE TABLE IF NOT EXISTS settings(id TEXT PRIMARY KEY,data TEXT NOT NULL);" +
         "CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id),member_id TEXT,created_at TEXT NOT NULL,data TEXT NOT NULL);" +
         "CREATE INDEX IF NOT EXISTS requests_conversation ON requests(conversation_id,created_at);" +
-        "CREATE TABLE IF NOT EXISTS extension_runs(id TEXT PRIMARY KEY,conversation_id TEXT,created_at TEXT NOT NULL,data TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS extension_runs(id TEXT PRIMARY KEY,conversation_id TEXT,created_at TEXT NOT NULL,data TEXT NOT NULL);" +
+        "CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY AUTOINCREMENT,category TEXT NOT NULL,level TEXT NOT NULL,conversation_id TEXT,data TEXT NOT NULL);" +
+        "CREATE INDEX IF NOT EXISTS logs_conversation ON logs(conversation_id,id);",
     );
     // Interrupted work is visible after restart; it is never a successful result.
+    const previousService = parse(
+      this.db
+        .prepare(
+          "SELECT data FROM logs WHERE category='service' AND json_extract(data,'$.action')='server.started' ORDER BY id DESC LIMIT 1",
+        )
+        .get(),
+    );
+    if (
+      previousService &&
+      !this.db
+        .prepare(
+          "SELECT id FROM logs WHERE category='service' AND json_extract(data,'$.action')='server.stopped' AND json_extract(data,'$.serviceId')=? LIMIT 1",
+        )
+        .get(previousService.serviceId)
+    ) {
+      this.log({
+        category: "service",
+        action: "server.prior-exit-unconfirmed",
+        level: "warn",
+        previousServiceId: previousService.serviceId,
+        message: "上次服务退出未确认，历史日志保留",
+      });
+    }
     for (const row of this.db.prepare("SELECT data FROM members").all()) {
       const member = parse(row);
       if (
@@ -45,6 +72,13 @@ export class Store {
         c.status = "paused";
         c.pauseReason = "服务重启，讨论已暂停。";
         this.saveConversation(c);
+        this.log({
+          category: "service",
+          action: "conversation.recovered",
+          level: "warn",
+          conversationId: c.id,
+          message: "重启后暂停未完成讨论",
+        });
       }
     }
     for (const row of this.db.prepare("SELECT id,data FROM messages").all()) {
@@ -114,7 +148,18 @@ export class Store {
   patchConversation(id, patch) {
     const c = this.conversation(id);
     if (!c) throw new Error("会话不存在。");
+    const previousStatus = c.status;
     Object.assign(c, patch, { updatedAt: new Date().toISOString() });
+    if (c.status !== previousStatus)
+      this.log({
+        category: "discussion",
+        action: "status.changed",
+        conversationId: id,
+        status: c.status,
+        error: c.status === "paused" ? c.pauseReason : undefined,
+        level: c.status === "paused" ? "warn" : "info",
+        message: "讨论状态变更",
+      });
     return this.saveConversation(c);
   }
   members(conversationId, { includeInactive = false } = {}) {
@@ -219,6 +264,7 @@ export class Store {
     );
   }
   saveRequest(record) {
+    const previous = this.request(record.id);
     this.db
       .prepare(
         "INSERT INTO requests VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
@@ -230,9 +276,37 @@ export class Store {
         record.createdAt,
         JSON.stringify(record),
       );
+    if (previous?.status !== record.status)
+      this.log({
+        category: "model",
+        action: "request." + record.status,
+        conversationId: record.conversationId,
+        memberId: record.memberId,
+        requestId: record.id,
+        model: record.actualModel ?? record.model,
+        phase: record.phase,
+        round: record.round,
+        status: record.status,
+        durationMs: Math.max(0, Date.now() - Date.parse(record.createdAt)),
+        inputHash: record.inputHash,
+        errorCode: record.errorCode,
+        error: record.error,
+        level:
+          record.status === "failed"
+            ? "error"
+            : ["interrupted", "invalid"].includes(record.status)
+              ? "warn"
+              : "info",
+        message: "模型请求状态变更",
+      });
     return record;
   }
   saveExtensionRun(record) {
+    const previous = parse(
+      this.db
+        .prepare("SELECT data FROM extension_runs WHERE id=?")
+        .get(record.id),
+    );
     this.db
       .prepare(
         "INSERT INTO extension_runs VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
@@ -243,15 +317,147 @@ export class Store {
         record.createdAt,
         JSON.stringify(record),
       );
+    if (previous?.status !== record.status)
+      this.log({
+        category: "extension",
+        action: (record.type === "hook" ? "hook." : "tool.") + record.status,
+        conversationId: record.conversationId,
+        memberId: record.memberId,
+        requestId: record.requestId,
+        executionId: record.id,
+        parentExecutionId: record.parentExecutionId,
+        extensionId: record.extensionId,
+        contentHash: record.contentHash,
+        resultHash: record.resultHash,
+        version: record.version,
+        event: record.event,
+        status: record.status,
+        durationMs: Math.max(0, Date.now() - Date.parse(record.createdAt)),
+        error: record.error,
+        level:
+          record.status === "failed"
+            ? "error"
+            : ["blocked", "interrupted"].includes(record.status)
+              ? "warn"
+              : "info",
+        message: record.type === "hook" ? "Hook 执行状态" : "工具执行状态",
+      });
   }
   extensionRuns(conversationId = null) {
     return this.db
       .prepare(
-        "SELECT data FROM extension_runs ORDER BY created_at DESC,rowid DESC LIMIT 200",
+        "SELECT data FROM extension_runs WHERE (? IS NULL OR conversation_id=?) ORDER BY created_at DESC,rowid DESC LIMIT 200",
       )
-      .all()
-      .map(parse)
-      .filter((r) => !conversationId || r.conversationId === conversationId);
+      .all(conversationId, conversationId)
+      .map(parse);
+  }
+  log(record) {
+    if (
+      !["service", "http", "discussion", "model", "extension"].includes(
+        record.category,
+      ) ||
+      !["info", "warn", "error"].includes(record.level ?? "info")
+    )
+      throw new Error("日志类型无效。");
+    const data = {
+      createdAt: new Date().toISOString(),
+      serviceId: this.serviceId,
+      level: "info",
+    };
+    // Only metadata enters operational logs; payloads remain in private request audits.
+    for (const key of [
+      "category",
+      "previousServiceId",
+      "action",
+      "level",
+      "message",
+      "conversationId",
+      "memberId",
+      "requestId",
+      "httpRequestId",
+      "executionId",
+      "parentExecutionId",
+      "extensionId",
+      "libraryId",
+      "contentHash",
+      "inputHash",
+      "resultHash",
+      "version",
+      "event",
+      "phase",
+      "round",
+      "status",
+      "statusCode",
+      "durationMs",
+      "method",
+      "route",
+      "client",
+      "errorCode",
+      "error",
+      "port",
+      "model",
+    ]) {
+      const value = record[key];
+      if (typeof value === "string") data[key] = safeError(value);
+      else if (typeof value === "number" && Number.isFinite(value))
+        data[key] = value;
+    }
+    const result = this.db
+      .prepare(
+        "INSERT INTO logs(category,level,conversation_id,data) VALUES(?,?,?,?)",
+      )
+      .run(
+        data.category,
+        data.level,
+        data.conversationId ?? null,
+        JSON.stringify(data),
+      );
+    return { id: Number(result.lastInsertRowid), ...data };
+  }
+  logs({
+    before = null,
+    limit = 50,
+    category = null,
+    level = null,
+    conversationId = null,
+    requestId = null,
+  } = {}) {
+    if (
+      (before !== null && (!Number.isSafeInteger(before) || before < 1)) ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 100 ||
+      (category !== null &&
+        !["service", "http", "discussion", "model", "extension"].includes(
+          category,
+        )) ||
+      (level !== null && !["info", "warn", "error"].includes(level)) ||
+      [conversationId, requestId].some(
+        (v) => v !== null && (typeof v !== "string" || v.length > 100),
+      )
+    )
+      throw new Error("日志筛选参数无效。");
+    const rows = this.db
+      .prepare(
+        "SELECT id,data FROM logs WHERE (? IS NULL OR id<?) AND (? IS NULL OR category=?) AND (? IS NULL OR level=?) AND (? IS NULL OR conversation_id=?) AND (? IS NULL OR json_extract(data,'$.requestId')=?) ORDER BY id DESC LIMIT ?",
+      )
+      .all(
+        before,
+        before,
+        category,
+        category,
+        level,
+        level,
+        conversationId,
+        conversationId,
+        requestId,
+        requestId,
+        limit + 1,
+      );
+    return {
+      logs: rows.slice(0, limit).map((row) => ({ id: row.id, ...parse(row) })),
+      nextBefore: rows.length > limit ? rows[limit - 1].id : null,
+    };
   }
   request(id) {
     return parse(
