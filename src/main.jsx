@@ -1268,11 +1268,13 @@ function ImportedFiles({conversationId,revision,running,onChange}) {
   const [expanded,setExpanded] = useState(null);
   const [removing,setRemoving] = useState(null);
   const [error,setError] = useState(null);
+  const requestVersion = useRef(0);
   useEffect(() => {
     let live = true;
+    const version = ++requestVersion.current;
     api("/conversations/" + conversationId + "/context")
-      .then(data => {if(live) {setFiles(importedDocuments(data.state.notes)); setError(null);}})
-      .catch(e => {if(live)setError(e.message);});
+      .then(data => {if(live && version === requestVersion.current) {setFiles(importedDocuments(data.state.notes)); setError(null);}})
+      .catch(e => {if(live && version === requestVersion.current)setError(e.message);});
     return () => {live = false;};
   },[conversationId,revision]);
   return <section className="imported-files" aria-label="已导入文件">
@@ -1289,6 +1291,8 @@ function ImportedFiles({conversationId,revision,running,onChange}) {
           setRemoving(file.id); setError(null);
           try {
             await api("/conversations/" + conversationId + "/memo/" + file.id,"DELETE",{});
+            // Older reads cannot undo an acknowledged deletion, even if parent refresh fails.
+            requestVersion.current++;
             setFiles(old => old.filter(item => item.id !== file.id));
             await onChange();
           } catch(e) {setError(e.message);}
