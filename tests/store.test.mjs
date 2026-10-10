@@ -44,6 +44,13 @@ test("conversation, members, native session and records survive restart", () => 
       ],
     });
     store.patchConversation(c.id, { status: "running" });
+    store.saveExtensionRun({
+      id: "tool-1",
+      conversationId: c.id,
+      createdAt: new Date().toISOString(),
+      status: "pending",
+      contentHash: "locked",
+    });
     store.close();
     store = new Store(file);
     assert.equal(store.conversation(c.id).status, "paused");
@@ -54,6 +61,8 @@ test("conversation, members, native session and records survive restart", () => 
     assert.equal(store.events(c.id, member.id).length, 1);
     assert.equal(store.request("request-1").status, "interrupted");
     assert.equal(store.request("request-1").input, "原始平台请求");
+    assert.equal(store.extensionRuns(c.id)[0].status, "interrupted");
+    assert.equal(store.extensionRuns(c.id)[0].contentHash, "locked");
     assert.equal(store.requests(c.id)[0].input, undefined);
     assert.equal(
       store.setting("context:" + c.id).task.constraints[0].text,

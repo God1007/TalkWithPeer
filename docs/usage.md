@@ -185,3 +185,7 @@ API 参与者只看平台发送的内容。项目路径本身不会授予远程�
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)：参考显式 runtime 边界；没有引入整套框架依赖。
 - [OpenAI Responses](https://developers.openai.com/api/docs/guides/text)、[Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create)、[DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)：直接协议接入依据。
 - 接口见 [agent-interface.md](agent-interface.md)，架构见 [architecture.md](architecture.md)，实际验证见 [progress.md](progress.md)。
+
+## 本机扩展
+
+终端 `/ext` 与网页 **设置 → 管理 Skills / Tools / Hooks** 共用库登记、审查、版本锁定、启停和执行记录。完整命令及执行边界见[扩展手册](extensions.md)。

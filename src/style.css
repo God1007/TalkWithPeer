@@ -1919,3 +1919,47 @@ button:active:not(:disabled) {
     padding: 12px;
   }
 }
+.extension-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+.extension-grid .runtime-section {
+  margin: 0;
+  min-width: 0;
+}
+.extension-grid p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.extension-grid .button {
+  margin-top: 12px;
+}
+.extension-review pre {
+  padding: 14px;
+  background: #f3f6f8;
+  font:
+    12px/1.7 ui-monospace,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 350px;
+  overflow: auto;
+}
+.extension-review details {
+  padding: 12px 0;
+  border-bottom: 1px solid #e2e7eb;
+}
+.extension-review summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.extension-manager .capacity-list small {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .extension-grid {
+    grid-template-columns: 1fr;
+  }
+}

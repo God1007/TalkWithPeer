@@ -21,7 +21,8 @@ export class Store {
         "CREATE INDEX IF NOT EXISTS events_conversation ON events(conversation_id,created_at);" +
         "CREATE TABLE IF NOT EXISTS settings(id TEXT PRIMARY KEY,data TEXT NOT NULL);" +
         "CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id),member_id TEXT,created_at TEXT NOT NULL,data TEXT NOT NULL);" +
-        "CREATE INDEX IF NOT EXISTS requests_conversation ON requests(conversation_id,created_at);",
+        "CREATE INDEX IF NOT EXISTS requests_conversation ON requests(conversation_id,created_at);" +
+        "CREATE TABLE IF NOT EXISTS extension_runs(id TEXT PRIMARY KEY,conversation_id TEXT,created_at TEXT NOT NULL,data TEXT NOT NULL);",
     );
     // Interrupted work is visible after restart; it is never a successful result.
     for (const row of this.db.prepare("SELECT data FROM members").all()) {
@@ -60,6 +61,17 @@ export class Store {
           ...request,
           status: "interrupted",
           error: "服务重启，调用结果未完成确认。",
+        });
+    }
+    for (const row of this.db
+      .prepare("SELECT data FROM extension_runs")
+      .all()) {
+      const record = parse(row);
+      if (record.status === "pending")
+        this.saveExtensionRun({
+          ...record,
+          status: "interrupted",
+          error: "服务重启，工具执行未完成确认。",
         });
     }
   }
@@ -219,6 +231,27 @@ export class Store {
         JSON.stringify(record),
       );
     return record;
+  }
+  saveExtensionRun(record) {
+    this.db
+      .prepare(
+        "INSERT INTO extension_runs VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+      )
+      .run(
+        record.id,
+        record.conversationId ?? null,
+        record.createdAt,
+        JSON.stringify(record),
+      );
+  }
+  extensionRuns(conversationId = null) {
+    return this.db
+      .prepare(
+        "SELECT data FROM extension_runs ORDER BY created_at DESC,rowid DESC LIMIT 200",
+      )
+      .all()
+      .map(parse)
+      .filter((r) => !conversationId || r.conversationId === conversationId);
   }
   request(id) {
     return parse(

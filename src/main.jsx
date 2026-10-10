@@ -27,6 +27,7 @@ import {
 } from "@phosphor-icons/react";
 import "./style.css";
 import { API_PRESETS } from "../shared/api-presets.mjs";
+import ExtensionManager from "./extensions.jsx";
 
 const effortLabels = {
   auto: "自动",
@@ -1977,6 +1978,7 @@ function App() {
               project: "选择本地项目",
               pets: "Pets",
               connect: "添加连接",
+              extensions: "本机扩展库",
               settings: "设置",
               members: "参与者",
               trace: modal.member?.name,
@@ -1984,7 +1986,7 @@ function App() {
             }[modal.type]
           }
           onClose={closeModal}
-          wide={["trace", "pets", "members"].includes(modal.type)}
+          wide={["trace", "pets", "members", "extensions"].includes(modal.type)}
         >
           {modal.type === "agent" && (
             <AgentForm
@@ -2027,6 +2029,9 @@ function App() {
               onClose={closeModal}
             />
           )}
+          {modal.type === "extensions" && (
+            <ExtensionManager running={running} api={api} />
+          )}
           {modal.type === "connect" && (
             <ConnectionForm
               onClose={closeModal}
@@ -2041,6 +2046,16 @@ function App() {
           )}
           {modal.type === "settings" && (
             <>
+              <div className="settings-heading">
+                <h3>扩展</h3>
+              </div>
+              <button
+                className="button secondary full-width"
+                onClick={() => setModal({ type: "extensions" })}
+              >
+                管理 Skills / Tools / Hooks
+              </button>
+              <div className="settings-divider" />
               <div className="settings-heading">
                 <h3>连接</h3>
                 <button

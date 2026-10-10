@@ -9,6 +9,7 @@ import { AgentRegistry } from "./registry.mjs";
 import { DiscussionEngine } from "./engine.mjs";
 import { PetLibrary, listCodexPets } from "./pets.mjs";
 import { safeError } from "./native-adapters.mjs";
+import { ExtensionRegistry } from "./extensions.mjs";
 
 const appRoot = fileURLToPath(new URL("../", import.meta.url));
 const publicRoot = path.join(appRoot, "dist");
@@ -36,6 +37,8 @@ export async function createApp({
   const registry =
     providedRegistry ?? new AgentRegistry(store, path.join(root, "runtime"));
   const engine = new DiscussionEngine(store, registry);
+  const extensions = new ExtensionRegistry(store, engine.context);
+  engine.extensions = extensions;
   const pets = new PetLibrary(store, path.join(root, "pets"));
   const tokens = new Set();
   let discovering = true;
@@ -232,6 +235,64 @@ export async function createApp({
       if (url.pathname === "/api/providers/refresh" && req.method === "POST") {
         discovering = true;
         json(res, 200, { providers: await refresh() });
+        return;
+      }
+      if (url.pathname === "/api/extensions" && req.method === "GET") {
+        json(res, 200, await extensions.scan());
+        return;
+      }
+      if (
+        pieces[1] === "extensions" &&
+        req.method === "POST" &&
+        pieces[2] !== "call"
+      ) {
+        if (engine.active.size)
+          throw new Error("请先暂停正在进行的讨论，再修改扩展配置。");
+        if (pieces[2] === "libraries") {
+          json(res, 201, { library: await extensions.addLibrary(body.path) });
+          return;
+        }
+        const id = decodeURIComponent(pieces[2] ?? "");
+        if (pieces[3] === "review") {
+          json(res, 200, { review: await extensions.review(id, body) });
+          return;
+        }
+        if (pieces[3] === "enable") {
+          json(
+            res,
+            200,
+            await extensions.enable(id, body.enabled, body.contentHash),
+          );
+          return;
+        }
+      }
+      if (pieces[1] === "extensions" && pieces[2] && req.method === "GET") {
+        const item = await extensions.find(decodeURIComponent(pieces[2]));
+        const previous = item.review
+          ? store.setting("extension-snapshot:" + item.review.contentHash)
+          : null;
+        json(res, 200, {
+          extension: item,
+          previousFiles: previous?.files ?? [],
+        });
+        return;
+      }
+      if (url.pathname === "/api/extensions/call" && req.method === "POST") {
+        const conversation = editable(body.conversationId);
+        json(
+          res,
+          200,
+          await extensions.call(
+            body.extensionId,
+            body.arguments,
+            {
+              conversationId: conversation.id,
+              memberId: null,
+              projectPath: conversation.projectPath,
+            },
+            AbortSignal.timeout(10000),
+          ),
+        );
         return;
       }
       if (url.pathname === "/api/providers" && req.method === "POST") {
@@ -578,6 +639,7 @@ export async function createApp({
     store,
     registry,
     engine,
+    extensions,
     pets,
     async close() {
       await engine.close();

@@ -6,6 +6,7 @@ import { realpathSync } from "node:fs";
 import { safeError } from "../server/native-adapters.mjs";
 
 export const commands = {
+  ext: "[add <仓库路径>|list|review <编号>|approve <编号> <哈希> [备注]|enable <编号> <哈希>|disable <编号>|call <编号> <JSON参数>|runs] 管理本机扩展",
   help: "命令列表",
   choose: "[连接编号或ID,...] 列出或添加 Agent；无参数时可输入编号选择",
   agents: "当前参与者",
@@ -238,6 +239,117 @@ export class Terminal {
       tail = args.join(" ");
     const endpoint = "/conversations/" + this.id;
     if (command === "help") return this.write(help);
+    if (command === "ext") {
+      if (args[0] === "add") {
+        const { library } = await this.request(
+          "/extensions/libraries",
+          "POST",
+          { path: line.replace(/^\/ext\s+add\s+/, "") },
+        );
+        return this.write("已登记 " + library.name + " · " + library.root);
+      }
+      const data = await this.request("/extensions");
+      if (!args.length || args[0] === "list") {
+        data.packages.forEach((p, i) =>
+          this.write(
+            i +
+              1 +
+              ". " +
+              p.manifest.name +
+              " [" +
+              p.manifest.type +
+              "] v" +
+              p.manifest.version +
+              " · " +
+              p.status +
+              " · " +
+              (p.enabled ? "已启用" : "未启用") +
+              "\n   " +
+              p.id +
+              "\n   " +
+              p.contentHash,
+          ),
+        );
+        data.errors.forEach((e) => this.write(e.path + "：" + e.error));
+        return;
+      }
+      if (args[0] === "runs")
+        return this.write(JSON.stringify(data.runs, null, 2));
+      const item =
+        data.packages[Number(args[1]) - 1] ??
+        data.packages.find((p) => p.id === args[1]);
+      if (!item) throw new Error("扩展编号无效，使用 /ext list 查看。");
+      const url = "/extensions/" + encodeURIComponent(item.id);
+      if (args[0] === "review") {
+        const { extension, previousFiles } = await this.request(url);
+        this.write(
+          extension.manifest.name +
+            " · 能力 " +
+            extension.capability +
+            "\n版本 " +
+            extension.manifest.version +
+            "\n当前哈希 " +
+            extension.contentHash +
+            "\nGit " +
+            (extension.commit ?? "未提交"),
+        );
+        for (const file of extension.files) {
+          const old = previousFiles.find((f) => f.path === file.path);
+          this.write(
+            "\n[" +
+              file.path +
+              (old
+                ? old.content === file.content
+                  ? " · 未变更"
+                  : " · 已变更"
+                : " · 新文件") +
+              "]\n" +
+              file.content,
+          );
+          if (old && old.content !== file.content)
+            this.write("\n[上次审查版本]\n" + old.content);
+        }
+        previousFiles
+          .filter((f) => !extension.files.some((n) => n.path === f.path))
+          .forEach((f) => this.write("[已删除] " + f.path + "\n" + f.content));
+        return;
+      }
+      if (args[0] === "approve") {
+        if (!args[2])
+          throw new Error("请先 /ext review，然后显式填写当前内容哈希。");
+        await this.request(url + "/review", "POST", {
+          contentHash: args[2],
+          note: args.slice(3).join(" "),
+        });
+        return this.write("已审查并锁定当前内容；仍需显式启用。");
+      }
+      if (["enable", "disable"].includes(args[0])) {
+        await this.request(url + "/enable", "POST", {
+          enabled: args[0] === "enable",
+          contentHash: args[2],
+        });
+        return this.write(
+          args[0] === "enable" ? "已启用锁定版本。" : "已停用。",
+        );
+      }
+      if (args[0] === "call") {
+        await this.workspace();
+        const json = line.match(/^\/ext\s+call\s+\S+\s+([\s\S]+)$/)?.[1];
+        if (!json) throw new Error("请填写工具JSON参数。");
+        return this.write(
+          JSON.stringify(
+            await this.request("/extensions/call", "POST", {
+              extensionId: item.id,
+              conversationId: this.id,
+              arguments: JSON.parse(json),
+            }),
+            null,
+            2,
+          ),
+        );
+      }
+      throw new Error("未知扩展命令。");
+    }
     if (command === "exit") return "exit";
     if (command === "choose") {
       await this.workspace();
