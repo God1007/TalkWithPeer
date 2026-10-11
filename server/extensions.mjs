@@ -597,7 +597,7 @@ export class ExtensionRegistry {
           !filename.startsWith(projectRoot + path.sep) ||
           (this.privateRoot &&
             (filename === this.privateRoot ||
-              filename.startsWith(this.privateRoot + path.sep))) ||
+              filename.startsWith(path.join(this.privateRoot, path.sep)))) ||
           /(?:^|\/)(?:\.env(?:\.[^/]*)?|\.git|\.ssh|\.codex|\.reasonix|\.talkwithpeer|credentials[^/]*|[^/]*\.(?:pem|key|p12))(?=\/|$)/i.test(
             filename,
           )

@@ -614,7 +614,7 @@ export async function createApp({
           if (
             !actual.startsWith(c.projectPath + path.sep) ||
             actual === privateRoot ||
-            actual.startsWith(privateRoot + path.sep) ||
+            actual.startsWith(path.join(privateRoot, path.sep)) ||
             /(?:^|\/)(?:\.env(?:\.[^/]*)?|\.git|\.ssh|\.codex|\.reasonix|\.talkwithpeer|credentials[^/]*|[^/]*\.(?:pem|key|p12))(?=\/|$)/i.test(
               actual,
             )

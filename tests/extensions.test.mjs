@@ -140,6 +140,21 @@ test("configured platform data is denied by both project readers, including syml
           .every((r) => r.status === "failed" && !r.resultHash),
       );
     });
+    await t.test("a filesystem-root boundary also denies descendant project files", async () => {
+      const registry = new ExtensionRegistry(
+        app.store,
+        app.engine.context,
+        path.parse(data).root,
+      );
+      await assert.rejects(
+        registry.call(
+          tool.id,
+          { path: "app-state-public/notes.txt" },
+          { conversationId: terminal.id },
+        ),
+        /私有/,
+      );
+    });
   } finally {
     await terminal?.close();
     await connection?.close();
