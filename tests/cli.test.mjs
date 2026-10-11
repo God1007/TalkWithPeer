@@ -62,7 +62,7 @@ test("CLI attaches shared server, selects agents and filters attributed messages
       };
     },
   };
-  const app = await createApp({ root, registry });
+  const app = await createApp({ root: path.join(root, "data"), registry });
   await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   let connection, terminal;
   try {
@@ -214,7 +214,7 @@ test("CLI attaches shared server, selects agents and filters attributed messages
       "notes.txt",
     );
     await assert.rejects(
-      terminal.execute("/read ../workspace.sqlite"),
+      terminal.execute("/read ../data/workspace.sqlite"),
       /项目内/,
     );
     await assert.rejects(terminal.execute("/choose does-not-exist"));

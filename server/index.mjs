@@ -33,11 +33,12 @@ export async function createApp({
   registry: providedRegistry,
 } = {}) {
   await mkdir(root, { recursive: true, mode: 0o700 });
+  const privateRoot = await realpath(root);
   const store = providedStore ?? new Store(path.join(root, "workspace.sqlite"));
   const registry =
     providedRegistry ?? new AgentRegistry(store, path.join(root, "runtime"));
   const engine = new DiscussionEngine(store, registry);
-  const extensions = new ExtensionRegistry(store, engine.context);
+  const extensions = new ExtensionRegistry(store, engine.context, privateRoot);
   engine.extensions = extensions;
   const pets = new PetLibrary(store, path.join(root, "pets"));
   const tokens = new Set();
@@ -612,6 +613,8 @@ export async function createApp({
           const actual = await realpath(path.resolve(c.projectPath, body.path));
           if (
             !actual.startsWith(c.projectPath + path.sep) ||
+            actual === privateRoot ||
+            actual.startsWith(privateRoot + path.sep) ||
             /(?:^|\/)(?:\.env(?:\.[^/]*)?|\.git|\.ssh|\.codex|\.reasonix|\.talkwithpeer|credentials[^/]*|[^/]*\.(?:pem|key|p12))(?=\/|$)/i.test(
               actual,
             )
