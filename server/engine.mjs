@@ -263,7 +263,12 @@ export class DiscussionEngine extends EventEmitter {
       status: phase === "opinion" ? "thinking" : "reviewing",
     });
     const timeout = setTimeout(
-      () => control.abort(new Error("本轮 Agent 请求超过时间限制。")),
+      () =>
+        control.abort(
+          Object.assign(new Error("本轮 Agent 请求超过时间限制。"), {
+            code: "agent_timeout",
+          }),
+        ),
       180000,
     );
     try {
@@ -551,6 +556,7 @@ export class DiscussionEngine extends EventEmitter {
       }
       throw new Error("本轮证据回取或格式修复已达到上限。");
     } catch (error) {
+      if (control.signal.aborted) error = control.signal.reason ?? error;
       const errorCode =
         error.code ??
         (/context.*(?:limit|exceed)|maximum context|上下文.*(?:超限|超过模型窗口)/i.test(
@@ -673,7 +679,7 @@ export class DiscussionEngine extends EventEmitter {
         [],
       );
       if (control.signal.aborted) {
-        this.pause(id, "讨论已暂停。");
+        this.pause(id, safeError(control.signal.reason ?? "讨论已暂停。"));
         return;
       }
       if (opinions.some((o) => !o)) {
@@ -692,7 +698,7 @@ export class DiscussionEngine extends EventEmitter {
       let previousVotes = [];
       for (let round = 1; round <= maxRounds; round++) {
         if (control.signal.aborted) {
-          this.pause(id, "讨论已暂停。");
+          this.pause(id, safeError(control.signal.reason ?? "讨论已暂停。"));
           return;
         }
         this.store.patchConversation(id, { candidate });
@@ -713,7 +719,7 @@ export class DiscussionEngine extends EventEmitter {
           previousVotes,
         );
         if (control.signal.aborted) {
-          this.pause(id, "讨论已暂停。");
+          this.pause(id, safeError(control.signal.reason ?? "讨论已暂停。"));
           return;
         }
         if (votes.some((v) => !v)) {
@@ -787,7 +793,12 @@ export class DiscussionEngine extends EventEmitter {
         "已达到本次判断轮数上限。可以补充信息或继续讨论，当前没有终局结果。",
       );
     } catch (error) {
-      this.pause(id, safeError(error));
+      this.pause(
+        id,
+        safeError(
+          control.signal.aborted ? (control.signal.reason ?? error) : error,
+        ),
+      );
     }
   }
   pause(id, reason) {
@@ -938,7 +949,9 @@ export class DiscussionEngine extends EventEmitter {
   stop(id) {
     const control = this.active.get(id);
     if (control) {
-      control.abort(new Error("讨论已暂停。"));
+      control.abort(
+        Object.assign(new Error("讨论已暂停。"), { code: "user_stop" }),
+      );
       for (const member of this.store.members(id))
         this.registry.closeMember(member.id);
     }
