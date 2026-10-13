@@ -4,7 +4,7 @@ import {readFile} from "node:fs/promises";
 import {transformWithOxc} from "vite";
 import {documentMemo,importedDocuments} from "../shared/document-import.mjs";
 
-test("a delayed context response cannot restore a deleted file when workspace refresh fails", async () => {
+test("delayed context success and failure cannot overwrite acknowledged deletion state", async () => {
   const app = await readFile(new URL("../src/main.jsx",import.meta.url),"utf8");
   const start = app.indexOf("function ImportedFiles(");
   const end = app.indexOf("function App()",start);
@@ -27,6 +27,7 @@ test("a delayed context response cannot restore a deleted file when workspace re
   };
   const React={createElement:(type,props,...children)=>({type,props:{...props,children}})};
   const IconButton=()=>null;
+  const ErrorLine=()=>null;
   const api = (url,method="GET") => {
     if(method==="DELETE")return deleteFailure ? Promise.reject(new Error("permission denied")) : Promise.resolve({removed:true});
     assert.match(url,/\/context$/);
@@ -36,12 +37,13 @@ test("a delayed context response cannot restore a deleted file when workspace re
   };
   // Compile the real component; control only hook state and transport ordering, not its callbacks.
   const Component=new Function("React","useState","useRef","useEffect","api","importedDocuments","ErrorLine","IconButton","FileText","X",code+"\nreturn ImportedFiles;")(
-    React,useState,useRef,useEffect,api,importedDocuments,()=>null,IconButton,()=>null,()=>null,
+    React,useState,useRef,useEffect,api,importedDocuments,ErrorLine,IconButton,()=>null,()=>null,
   );
   const render = revision => {cursor=0; return Component({conversationId:"fixture",revision,running:false,onChange:async()=>{throw new Error("workspace refresh failed");}});};
   const nodes = node => !node || typeof node!=="object" ? [] :
     [node,...(node.props?.children ?? []).flat(Infinity).flatMap(nodes)];
   const removeButtons = tree => nodes(tree).filter(node=>node.type===IconButton);
+  const visibleError = tree => nodes(tree).find(node=>node.type===ErrorLine)?.props.error;
   const flush = async () => {await Promise.resolve(); await Promise.resolve();};
   const note={id:"original",memberId:null,text:documentMemo({name:"fixture.txt",hash:"a".repeat(64)},"synthetic source")};
 
@@ -66,5 +68,25 @@ test("a delayed context response cannot restore a deleted file when workspace re
   requests[3].resolve({state:{notes:[{...note,id:"new-upload"},{...note,id:"another-upload"}]}});
   await flush();
   assert.equal(removeButtons(render(4)).length,2,"a failed DELETE must not invalidate a valid in-flight read");
+
+  deleteFailure=false;
+  await removeButtons(render(5))[0].props.onClick();
+  assert.equal(removeButtons(render(5)).length,1);
+  assert.equal(visibleError(render(5)),"workspace refresh failed");
+  requests[4].reject(new Error("obsolete context read failed"));
+  await flush();
+  assert.equal(
+    visibleError(render(5)),
+    "workspace refresh failed",
+    "a stale GET failure must not overwrite the error after a successful DELETE",
+  );
+  render(6);
+  requests[5].reject(new Error("current context read failed"));
+  await flush();
+  assert.equal(
+    visibleError(render(6)),
+    "current context read failed",
+    "a fresh GET failure must still be visible",
+  );
   for(const effect of effects)effect?.cleanup?.();
 });
