@@ -638,6 +638,191 @@ button:active:not(:disabled) {
   align-items: center;
   justify-content: space-between;
 }
+.document-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.imported-files {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.imported-files:empty {
+  display: none;
+}
+.imported-file {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faff;
+  margin-bottom: 4px;
+}
+.imported-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 7px;
+}
+.imported-file-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  min-height: 38px;
+  border: 0;
+  background: transparent;
+  color: #44536b;
+  font-size: 13px;
+  text-align: left;
+}
+.imported-file-name svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.imported-file-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.imported-file-row .icon-button {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+}
+.imported-file-preview {
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px 14px;
+  margin: 0;
+  border-top: 1px solid var(--line);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.document-import textarea {
+  min-height: 240px;
+  line-height: 1.6;
+}
+.document-intro {
+  margin: 4px 0 20px;
+  color: #677386;
+  font-size: 13px;
+  line-height: 1.7;
+  text-align: left;
+}
+.document-picker {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 26px 16px 23px;
+  border: 1px dashed #bbc8de;
+  border-radius: 10px;
+  background: #f8faff;
+  color: #364459;
+  gap: 8px;
+}
+.document-picker:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: #f0f5ff;
+}
+.document-picker:disabled {
+  opacity: 1;
+  color: #677386;
+}
+.document-picker-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 5px;
+  border-radius: 12px;
+  background: #e9effc;
+  color: var(--accent);
+}
+.document-picker strong {
+  font-size: 15px;
+  font-weight: 600;
+}
+.document-picker-formats {
+  font-size: 12px;
+  color: #60708a;
+  line-height: 1.6;
+}
+.document-picker-limit {
+  font-size: 12px;
+  color: #6b7688;
+}
+.document-local-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: #677386;
+  font-size: 12px;
+  line-height: 1.65;
+  text-align: left;
+  margin: 14px 0 0;
+}
+.document-local-note svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.document-selected {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faff;
+}
+.document-file-icon {
+  display: flex;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.document-file-info {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+.document-file-info strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: #364459;
+}
+.document-file-info > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  font-size: 12px;
+  color: #60708a;
+}
+.document-selected > button {
+  flex-shrink: 0;
+  min-height: 40px;
+}
+.document-note {
+  padding: 10px 0;
+}
+.document-note summary {
+  overflow-wrap: anywhere;
+}
+.document-note pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+}
 .round-control {
   display: flex;
   gap: 7px;
