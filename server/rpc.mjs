@@ -28,6 +28,10 @@ export class RpcPeer extends EventEmitter {
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
+    this.child.stdin.on("error", () => {
+      this.finish(new Error("Agent 输入连接已断开。"));
+      killProcess(this.child);
+    });
     this.child.stderr.on("data", () => {}); // Native diagnostics can contain account details.
     const lines = createInterface({
       input: this.child.stdout,
