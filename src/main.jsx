@@ -2062,7 +2062,7 @@ function App() {
             <DocumentImport running={running} onClose={closeModal} onSave={async (memo) => {
               const target = modal.conversationId;
               await api("/conversations/" + target + "/memo","POST",{text:memo});
-              await load(target);
+              await load(target).catch(e => setError("文件已导入，但会话刷新失败：" + e.message));
             }} />
           )}
           {modal.type === "agent" && (
