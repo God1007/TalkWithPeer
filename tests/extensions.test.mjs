@@ -70,6 +70,98 @@ async function setup() {
     },
   };
 }
+test("configured platform data is denied by both project readers, including symlink aliases", async (t) => {
+  const s = await setup();
+  let app, connection, terminal;
+  try {
+    const tool = await s.approve("project");
+    const data = path.join(s.root, "app-state");
+    await mkdir(data);
+    await writeFile(path.join(data, "plain.txt"), "PRIVATE_DATA_FIXTURE");
+    await symlink(data, path.join(s.root, "configured-data"), "dir");
+    await symlink(
+      path.join(data, "plain.txt"),
+      path.join(s.root, "innocent.txt"),
+    );
+    await mkdir(path.join(s.root, "app-state-public"));
+    await writeFile(
+      path.join(s.root, "app-state-public/notes.txt"),
+      "ordinary project text",
+    );
+    app = await createApp({
+      root: path.join(s.root, "configured-data"),
+      registry: {
+        list: () => [],
+        refresh: async () => [],
+        close() {},
+        closeMember() {},
+      },
+    });
+    app.store.saveSetting("extensions", s.store.setting("extensions"));
+    await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+    connection = await connectLocal(app.server.address().port);
+    terminal = new Terminal(connection.request, () => {});
+    await terminal.execute("/new data-root fixture");
+    await terminal.execute("/project " + s.root);
+    const paths = [
+      "app-state/plain.txt",
+      "configured-data/plain.txt",
+      "innocent.txt",
+    ];
+    await t.test("HTTP /read does not create shared memos for private data", async () => {
+      const before = app.engine.context.state(terminal.id).notes.length;
+      for (const filename of paths)
+        await assert.rejects(
+          terminal.execute("/read " + filename),
+          /凭证|私有/,
+        );
+      assert.equal(app.engine.context.state(terminal.id).notes.length, before);
+      await terminal.execute("/read app-state-public/notes.txt");
+      assert.equal(app.engine.context.state(terminal.id).notes.length, before + 1);
+    });
+    await t.test("project_read does not return private data", async () => {
+      const scope = { conversationId: terminal.id };
+      for (const filename of paths)
+        await assert.rejects(
+          app.extensions.call(tool.id, { path: filename }, scope),
+          /私有/,
+        );
+      assert.equal(
+        (await app.extensions.call(
+          tool.id,
+          { path: "app-state-public/notes.txt" },
+          scope,
+        )).result.content,
+        "ordinary project text",
+      );
+      assert.ok(
+        app.store.extensionRuns(terminal.id)
+          .filter((r) => paths.includes(r.arguments?.path))
+          .every((r) => r.status === "failed" && !r.resultHash),
+      );
+    });
+    await t.test("a filesystem-root boundary also denies descendant project files", async () => {
+      const registry = new ExtensionRegistry(
+        app.store,
+        app.engine.context,
+        path.parse(data).root,
+      );
+      await assert.rejects(
+        registry.call(
+          tool.id,
+          { path: "app-state-public/notes.txt" },
+          { conversationId: terminal.id },
+        ),
+        /私有/,
+      );
+    });
+  } finally {
+    await terminal?.close();
+    await connection?.close();
+    await app?.close();
+    await s.close();
+  }
+});
 test("extension review binds exact content, enables separately and invalidates changed sources", async () => {
   const s = await setup();
   try {

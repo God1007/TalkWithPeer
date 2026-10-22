@@ -43,9 +43,10 @@ const operations = {
   },
 };
 export class ExtensionRegistry {
-  constructor(store, context) {
+  constructor(store, context, privateRoot = null) {
     this.store = store;
     this.context = context;
+    this.privateRoot = privateRoot;
   }
   state() {
     return this.store.setting("extensions", {
@@ -594,6 +595,9 @@ export class ExtensionRegistry {
         const filename = await realpath(path.resolve(projectRoot, args.path));
         if (
           !filename.startsWith(projectRoot + path.sep) ||
+          (this.privateRoot &&
+            (filename === this.privateRoot ||
+              filename.startsWith(path.join(this.privateRoot, path.sep)))) ||
           /(?:^|\/)(?:\.env(?:\.[^/]*)?|\.git|\.ssh|\.codex|\.reasonix|\.talkwithpeer|credentials[^/]*|[^/]*\.(?:pem|key|p12))(?=\/|$)/i.test(
             filename,
           )
