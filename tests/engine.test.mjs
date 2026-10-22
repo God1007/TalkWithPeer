@@ -207,3 +207,182 @@ test("stopping an in-flight request pauses and keeps shared records", async () =
     store.close();
   }
 });
+test("abort reasons survive adapters in both stages without inventing votes", async (t) => {
+  const originalTimeout = globalThis.setTimeout;
+  let deadline;
+  t.mock.method(globalThis, "setTimeout", (callback, ms, ...args) => {
+    if (ms === 180000) {
+      deadline = callback;
+      return originalTimeout(() => {}, ms);
+    }
+    return originalTimeout(callback, ms, ...args);
+  });
+  for (const phase of ["opinion", "judgment"])
+    for (const mode of ["timeout", "user", "secret", "default", "provider"]) {
+      const store = new Store(":memory:"),
+        c = store.createConversation();
+      store.addMember(c.id, {
+        name: "fixture",
+        providerId: "fixture",
+        model: "model",
+        parameters: {},
+      });
+      let ready;
+      const started = new Promise((r) => (ready = r));
+      const registry = {
+        validateMember() {},
+        closeMember() {},
+        async driver() {
+          return {
+            async run(prompt, _d, _a, signal) {
+              if (phase === "judgment" && prompt.includes("请提出独立观点"))
+                return {
+                  text: JSON.stringify({
+                    message: "opinion",
+                    proposal: "proposal",
+                  }),
+                  model: "model",
+                };
+              ready();
+              if (mode === "provider")
+                throw Object.assign(new Error("provider original failure"), {
+                  code: "provider_failure",
+                });
+              await new Promise((r) =>
+                signal.addEventListener("abort", r, { once: true }),
+              );
+              throw new Error("adapter lost reason");
+            },
+          };
+        },
+      };
+      const engine = new DiscussionEngine(store, registry);
+      try {
+        const task = engine.start(c.id, "fixture");
+        await started;
+        let expected, code;
+        if (mode === "timeout") {
+          deadline();
+          expected = "本轮 Agent 请求超过时间限制。";
+          code = "agent_timeout";
+        } else if (mode === "user") {
+          engine.stop(c.id);
+          expected = "讨论已暂停。";
+          code = "user_stop";
+        } else if (mode === "secret") {
+          engine.active
+            .get(c.id)
+            .abort(
+              Object.assign(
+                new Error("cause token=sk-sensitive-fixture-value"),
+                { code: "fixture_abort" },
+              ),
+            );
+          expected = "cause [已隐藏凭证]";
+          code = "fixture_abort";
+        } else if (mode === "default") {
+          const control = engine.active.get(c.id);
+          control.abort();
+          expected = control.signal.reason.message;
+          code = control.signal.reason.code;
+        } else {
+          expected = "provider original failure";
+          code = "provider_failure";
+        }
+        await task;
+        const failure = store
+          .messages(c.id)
+          .find((m) => ["interrupted", "failed"].includes(m.status));
+        assert.equal(failure.error, expected);
+        assert.equal(failure.errorCode, code);
+        const request = store.request(
+          failure.requestId ?? store.requests(c.id).at(-1).id,
+        );
+        assert.equal(request.error, expected);
+        assert.equal(request.errorCode, code);
+        assert.ok(
+          store
+            .events(c.id)
+            .some(
+              (e) =>
+                e.type === "error" &&
+                e.summary === expected &&
+                e.detail.errorCode === code,
+            ),
+        );
+        assert.equal(store.conversation(c.id).status, "paused");
+        assert.equal(store.conversation(c.id).result, null);
+        assert.equal(
+          store
+            .messages(c.id)
+            .filter((m) => m.kind === "judgment" && m.status === "complete")
+            .length,
+          0,
+        );
+        if (mode !== "provider")
+          assert.equal(store.conversation(c.id).pauseReason, expected);
+        assert.equal(
+          store.messages(c.id).filter((m) => m.kind === "result").length,
+          0,
+        );
+        assert.ok(
+          !JSON.stringify(store.logs()).includes("sk-sensitive-fixture-value"),
+        );
+      } finally {
+        await engine.close();
+        store.close();
+      }
+    }
+});
+test("cancellation during input measurement preserves cause before any model reply", async () => {
+  const store = new Store(":memory:"),
+    c = store.createConversation();
+  store.addMember(c.id, {
+    name: "fixture",
+    providerId: "fixture",
+    model: "model",
+    parameters: {},
+  });
+  let ready;
+  const started = new Promise((r) => (ready = r));
+  let calls = 0;
+  const registry = {
+    validateMember() {},
+    closeMember() {},
+    async driver() {
+      return {
+        async countTokens(_prompt, signal) {
+          ready();
+          await new Promise((r) =>
+            signal.addEventListener("abort", r, { once: true }),
+          );
+          throw new Error("counter lost reason");
+        },
+        async run() {
+          calls++;
+          throw new Error("must not run");
+        },
+      };
+    },
+  };
+  const engine = new DiscussionEngine(store, registry);
+  try {
+    const task = engine.start(c.id, "fixture");
+    await started;
+    engine.active
+      .get(c.id)
+      .abort(new Error("measure token=sk-measure-sensitive-value"));
+    await task;
+    assert.equal(store.conversation(c.id).pauseReason, "measure [已隐藏凭证]");
+    assert.equal(calls, 0);
+    assert.equal(store.requests(c.id).length, 0);
+    assert.ok(store.messages(c.id).every((m) => m.author === "user"));
+    assert.equal(store.conversation(c.id).result, null);
+    assert.ok(
+      !JSON.stringify(store.logs()).includes("sk-measure-sensitive-value"),
+    );
+  } finally {
+    await engine.close();
+    store.close();
+  }
+});

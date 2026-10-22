@@ -108,7 +108,7 @@ export class CodexAdapter {
       timer = setTimeout(() => {
         rejectDone(new Error("Codex 本轮回复超时。"));
         this.close();
-      }, 120000);
+      }, 180000);
       listener = (message) => {
         const p = message.params ?? {};
         if (Object.hasOwn(message, "id")) {
