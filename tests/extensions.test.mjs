@@ -505,6 +505,70 @@ test("project chunks preserve legacy reads, bound text ranges and reject changed
     await s.close();
   }
 });
+test("tool operations reject inherited names and non-string aliases", async (t) => {
+  const s = await setup();
+  try {
+    const invalid = [
+      ["inherited-to-string", "toString"],
+      ["inherited-constructor", "constructor"],
+      ["inherited-prototype", "__proto__"],
+      ["array-public-read", ["public_read"]],
+      ["array-public-search", ["public_search"]],
+      ["array-project-read", ["project_read"]],
+      ["array-extension-read", ["extension_read"]],
+    ];
+    for (const [id, operation] of invalid)
+      await s.pack(id, "tool", { operation });
+    const scanned = await s.extensions.scan();
+    for (const [id, operation] of invalid)
+      await t.test(JSON.stringify(operation), () => {
+        assert.ok(
+          !scanned.packages.some((p) => p.manifest.id === id),
+          "an invalid operation must not become a reviewable tool",
+        );
+        assert.ok(
+          scanned.errors.some(
+            (e) => e.path === "tools/" + id && /只读操作/.test(e.error),
+          ),
+          "the catalog must report the rejected tool definition",
+        );
+      });
+  } finally {
+    await s.close();
+  }
+});
+test("all declared string tool operations retain their capabilities and arguments", async () => {
+  const s = await setup();
+  try {
+    await s.pack("reference-reader", "tool", { operation: "extension_read" });
+    const expected = [
+      { id: "reader", operation: "public_read", capability: "public-history.read", arguments: ["messageIds"] },
+      { id: "search", operation: "public_search", capability: "public-history.read", arguments: ["query"] },
+      { id: "project", operation: "project_read", capability: "project.read", arguments: ["expectedHash", "maxChars", "offset", "path"] },
+      { id: "reference-reader", operation: "extension_read", capability: "extension-reference.read", arguments: ["extensionId", "maxChars", "offset", "path"] },
+    ];
+    const scanned = await s.extensions.scan();
+    assert.deepEqual(scanned.errors, []);
+    const approved = [];
+    for (const item of expected) {
+      const tool = scanned.packages.find((p) => p.manifest.id === item.id);
+      assert.ok(tool, "a declared tool must remain discoverable");
+      assert.equal(tool.definition.operation, item.operation);
+      assert.equal(tool.capability, item.capability);
+      approved.push(await s.approve(item.id));
+    }
+    const snapshot = await s.extensions.snapshot();
+    assert.equal(snapshot.tools.length, expected.length);
+    for (let index = 0; index < expected.length; index++) {
+      const tool = snapshot.tools.find((p) => p.id === approved[index].id);
+      assert.ok(tool, "an approved and enabled tool must enter the snapshot");
+      assert.equal(tool.capability, expected[index].capability);
+      assert.deepEqual(Object.keys(tool.arguments).sort(), expected[index].arguments);
+    }
+  } finally {
+    await s.close();
+  }
+});
 test("symlinks, script files and task-rewriting hooks are never executable packages", async () => {
   const s = await setup();
   try {

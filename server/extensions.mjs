@@ -172,7 +172,8 @@ export class ExtensionRegistry {
         throw new Error("扩展定义无效。");
       if (manifest.type === "tool") {
         if (
-          !operations[definition.operation] ||
+          typeof definition.operation !== "string" ||
+          !Object.hasOwn(operations, definition.operation) ||
           Object.keys(definition).some((k) => k !== "operation")
         )
           throw new Error("一期工具只支持平台声明的只读操作。");
