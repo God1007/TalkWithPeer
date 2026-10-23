@@ -1323,6 +1323,7 @@ function App() {
   const [detail, setDetail] = useState(null);
   const selectedId = useRef(id);
   selectedId.current = id;
+  const loadVersion = useRef(0);
   const scroller = useRef(null);
   const follow = useRef(true);
   const current = workspace?.conversation;
@@ -1330,15 +1331,21 @@ function App() {
   const running = current?.status === "running";
   const closeModal = () => setModal(null);
   const load = useCallback(async (target) => {
-    const result = await api("/conversations/" + target);
     if (selectedId.current !== target) return;
-    setWorkspace(result);
-    setBootstrap((old) => ({
-      ...old,
-      conversations: old.conversations
-        .map((c) => (c.id === target ? result.conversation : c))
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
-    }));
+    const version = ++loadVersion.current;
+    try {
+      const result = await api("/conversations/" + target);
+      if (selectedId.current !== target || version !== loadVersion.current) return;
+      setWorkspace(result);
+      setBootstrap((old) => ({
+        ...old,
+        conversations: old.conversations
+          .map((c) => (c.id === target ? result.conversation : c))
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+      }));
+    } catch (e) {
+      if (selectedId.current === target && version === loadVersion.current) throw e;
+    }
   }, []);
   const boot = useCallback(async () => {
     try {
@@ -1396,6 +1403,7 @@ function App() {
     };
     return () => {
       disposed = true;
+      loadVersion.current++;
       clearTimeout(scheduled);
       stream.close();
     };
