@@ -212,6 +212,104 @@ test("extension review binds exact content, enables separately and invalidates c
     await s.close();
   }
 });
+test("enabling one extension cannot restore a concurrently disabled extension", async () => {
+  const s = await setup();
+  try {
+    const reader = await s.approve("reader"), search = await s.approve("search");
+    await s.extensions.enable(reader.id, false);
+    const results = await Promise.all([
+      s.extensions.enable(reader.id, true, reader.contentHash),
+      s.extensions.enable(search.id, false),
+    ]);
+    assert.deepEqual(results, [{enabled: true}, {enabled: false}]);
+    const snapshot = await s.extensions.snapshot();
+    assert.ok(snapshot.locks.some(lock => lock.id === reader.id));
+    assert.ok(!snapshot.locks.some(lock => lock.id === search.id), "an acknowledged disable must remain effective after another package finishes scanning");
+    const c = s.store.createConversation();
+    await assert.rejects(s.extensions.call(search.id, {query: "fixture"}, {conversationId: c.id}), /未启用/);
+  } finally {
+    await s.close();
+  }
+});
+test("concurrent enables preserve both independently reviewed extension locks", async () => {
+  const s = await setup();
+  try {
+    const reader = await s.approve("reader"), search = await s.approve("search");
+    await s.extensions.enable(reader.id, false);
+    await s.extensions.enable(search.id, false);
+    await Promise.all([
+      s.extensions.enable(reader.id, true, reader.contentHash),
+      s.extensions.enable(search.id, true, search.contentHash),
+    ]);
+    const snapshot = await s.extensions.snapshot();
+    assert.ok(snapshot.locks.some(lock => lock.id === reader.id), "the reader enable must not be overwritten by another enable");
+    assert.ok(snapshot.locks.some(lock => lock.id === search.id), "the search enable must not be overwritten by another enable");
+  } finally {
+    await s.close();
+  }
+});
+async function pauseEnable(s, item) {
+  const find = s.extensions.find.bind(s.extensions), ready = Promise.withResolvers(), release = Promise.withResolvers();
+  let held = false;
+  // Pause only after the real scan, so other operations can commit before enable saves.
+  s.extensions.find = async id => {
+    const found = await find(id);
+    if (id === item.id && !held) {
+      held = true;
+      ready.resolve();
+      await release.promise;
+    }
+    return found;
+  };
+  const pending = s.extensions.enable(item.id, true, item.contentHash);
+  await ready.promise;
+  return {pending, resume: release.resolve};
+}
+test("an enable preserves approvals and libraries committed while its scan was pending", async () => {
+  const s = await setup();
+  let paused;
+  try {
+    const reader = await s.approve("reader"), search = await s.approve("search");
+    await s.extensions.enable(reader.id, false);
+    paused = await pauseEnable(s, reader);
+    await s.extensions.review(search.id, {contentHash: search.contentHash, note: "concurrent review"});
+    const library = path.join(s.root, "another-library");
+    await mkdir(library);
+    await s.extensions.addLibrary(library);
+    const before = s.extensions.state();
+    paused.resume();
+    await paused.pending;
+    const after = s.extensions.state();
+    assert.deepEqual(after.reviews, before.reviews);
+    assert.deepEqual(after.libraries, before.libraries);
+    assert.equal(after.enabled[reader.id], reader.contentHash);
+  } finally {
+    paused?.resume();
+    await paused?.pending.catch(() => {});
+    await s.close();
+  }
+});
+test("an enable rejects an approval superseded while its scan was pending", async () => {
+  const s = await setup();
+  let paused;
+  try {
+    const reader = await s.approve("reader");
+    await s.extensions.enable(reader.id, false);
+    paused = await pauseEnable(s, reader);
+    await s.pack("reader", "tool", {operation: "public_search"});
+    const changed = await s.extensions.find(reader.id);
+    assert.notEqual(changed.contentHash, reader.contentHash);
+    await s.extensions.review(changed.id, {contentHash: changed.contentHash, note: "new version"});
+    const before = s.extensions.state();
+    paused.resume();
+    await assert.rejects(paused.pending, /审查|哈希/);
+    assert.deepEqual(s.extensions.state(), before, "a rejected old enable must not restore an obsolete approval");
+  } finally {
+    paused?.resume();
+    await paused?.pending.catch(() => {});
+    await s.close();
+  }
+});
 test("trusted read-only handlers enforce scope, project boundaries and deny hooks", async () => {
   const s = await setup();
   try {

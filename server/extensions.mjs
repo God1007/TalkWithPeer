@@ -361,10 +361,16 @@ export class ExtensionRegistry {
       return { enabled: false };
     }
     const item = await this.find(id);
-    if (enabled && (!item.reviewed || item.contentHash !== contentHash))
+    // Preserve configuration changes committed during the asynchronous scan.
+    const latest = this.state();
+    if (
+      enabled &&
+      (latest.reviews[id]?.contentHash !== item.contentHash ||
+        item.contentHash !== contentHash)
+    )
       throw new Error("启用前须审查当前内容并锁定哈希。");
-    state.enabled[id] = enabled ? item.contentHash : null;
-    this.save(state);
+    latest.enabled[id] = enabled ? item.contentHash : null;
+    this.save(latest);
     this.store.log({
       category: "extension",
       action: enabled ? "version.enabled" : "version.disabled",
