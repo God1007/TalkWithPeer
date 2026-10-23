@@ -9,20 +9,28 @@ export default function ExtensionManager({ running, api }) {
     [note, setNote] = useState(""),
     [error, setError] = useState(null),
     [busy, setBusy] = useState(false);
+  const [detailRevision, setDetailRevision] = useState(0);
   const refresh = useCallback(async () => {
     setData(await api("/extensions"));
   }, [api]);
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
   }, [refresh]);
+  useEffect(() => {
+    let live = true;
+    setDetail(null);
+    if (selected)
+      api("/extensions/" + encodeURIComponent(selected))
+        .then((value) => { if (live) setDetail(value); })
+        .catch((e) => { if (live) setError(e.message); });
+    return () => { live = false; };
+  }, [selected, detailRevision, data, api]);
   const perform = async (action) => {
     setBusy(true);
     setError(null);
     try {
       await action();
       await refresh();
-      if (selected)
-        setDetail(await api("/extensions/" + encodeURIComponent(selected)));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -133,16 +141,11 @@ export default function ExtensionManager({ running, api }) {
             <code className="request-hash">{p.contentHash}</code>
             <button
               className="button secondary"
-              onClick={async () => {
-                try {
-                  setSelected(p.id);
-                  setDetail(
-                    await api("/extensions/" + encodeURIComponent(p.id)),
-                  );
-                  setNote("");
-                } catch (e) {
-                  setError(e.message);
-                }
+              onClick={() => {
+                setSelected(p.id);
+                setDetailRevision(value => value + 1);
+                setNote("");
+                setError(null);
               }}
             >
               查看文件与差异
@@ -169,10 +172,10 @@ export default function ExtensionManager({ running, api }) {
           </article>
         ))}
       </div>
-      {detail && (
+      {selected && (
         <section className="runtime-section extension-review">
           <div className="pane-heading">
-            <h3>审查 {detail.extension.manifest.name}</h3>
+            <h3>审查 {data?.packages.find(p => p.id === selected)?.manifest.name}</h3>
             <button
               className="text-button"
               onClick={() => {
@@ -183,6 +186,7 @@ export default function ExtensionManager({ running, api }) {
               收起
             </button>
           </div>
+          {detail?.extension.id === selected ? <>
           <p className="subtle">
             平台能力：{detail.extension.capability} · Git commit：
             {detail.extension.commit ?? "未提交"}
@@ -250,7 +254,7 @@ export default function ExtensionManager({ running, api }) {
             onClick={() =>
               perform(() =>
                 api(
-                  "/extensions/" + encodeURIComponent(selected) + "/review",
+                  "/extensions/" + encodeURIComponent(detail.extension.id) + "/review",
                   "POST",
                   { contentHash: detail.extension.contentHash, note },
                 ),
@@ -262,6 +266,7 @@ export default function ExtensionManager({ running, api }) {
           <p className="subtle">
             批准不会自动启用；请先核对所有文件，再启用锁定版本。
           </p>
+          </> : <p className="subtle">尚未载入文件与差异。</p>}
         </section>
       )}
       {!!data?.errors.length && (
