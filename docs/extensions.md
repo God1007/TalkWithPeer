@@ -45,6 +45,8 @@ after_reply 在有效回答通过格式与候选校验后、发布前触发。af
 
 一期不运行扩展仓库中的任意脚本。tool 入口只声明 public_read、public_search、project_read、extension_read，由平台可信处理器执行。project_read 限于所选项目文本，禁止越界、凭证和平台私有目录。public_search 返回明确标记的片段，不冒充完整原文。
 
+包内 Markdown/JSON 文件须为有效 UTF-8；错误编码会作为校验失败显示，不参与批准和启用。合法内容及 Markdown 正文中的 BOM 保持原样。
+
 Hook 使用 note、audit、deny 的确定性操作。修改用户约束、任意命令、网络请求等定义会被拒绝。包中存在脚本、符号链接或非法声明时，不成为可执行扩展。
 
 原生 Agent 通过平台 JSON 约定调用这些工具；原生运行时内部的其他工具、skills 和 hooks 不被自动同步或接管。直接 API 参与者由平台运行循环执行平台工具。

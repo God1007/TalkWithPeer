@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { Store } from "../server/store.mjs";
@@ -501,6 +501,74 @@ test("project chunks preserve legacy reads, bound text ranges and reject changed
       (await s.extensions.snapshot()).locks[0].contentHash,
       tool.contentHash,
     );
+  } finally {
+    await s.close();
+  }
+});
+async function legacyTextHash(folder, names) {
+  const files = await Promise.all([...names].sort().map(async (name) => ({
+    path: name,
+    content: (await readFile(path.join(folder, name))).toString("utf8"),
+  })));
+  return hashInput(files);
+}
+test("malformed UTF-8 invalidates legacy extension approvals and execution locks", async (t) => {
+  for (const [filename, prefix, suffix] of [
+    ["notes.md", "", ""],
+    ["notes.json", '{"note":"', '"}'],
+  ]) await t.test(filename, async () => {
+    const s = await setup();
+    try {
+      const folder = await s.pack("legacy-utf8", "tool", { operation: "public_search" });
+      const target = path.join(folder, filename);
+      // The legacy decoder represented either malformed byte as this same valid character.
+      await writeFile(target, prefix + "\uFFFD" + suffix);
+      const item = (await s.extensions.scan()).packages.find(p => p.manifest.id === "legacy-utf8");
+      await writeFile(target, Buffer.concat([Buffer.from(prefix), Buffer.from([0x80]), Buffer.from(suffix)]));
+      const contentHash = await legacyTextHash(folder, ["definition.json", "extension.json", filename]);
+      assert.equal(item.contentHash, contentHash);
+      const state = s.extensions.state();
+      state.reviews[item.id] = { contentHash, version: item.manifest.version, commit: item.commit, note: "legacy fixture", reviewedAt: new Date().toISOString() };
+      state.enabled[item.id] = contentHash;
+      s.store.saveSetting("extension-snapshot:" + contentHash, { ...item, contentHash });
+      s.store.saveSetting("extensions", state);
+      const conversation = s.store.createConversation();
+      const locks = [{ id: item.id, contentHash, version: item.manifest.version }];
+      for (const byte of [0x80, 0x81]) {
+        await writeFile(target, Buffer.concat([Buffer.from(prefix), Buffer.from([byte]), Buffer.from(suffix)]));
+        const scanned = await s.extensions.find(item.id);
+        assert.equal(scanned.status, "unavailable", "malformed bytes must invalidate even a previously approved package");
+        assert.equal(scanned.enabled, false);
+        assert.equal(scanned.contentHash, null);
+        await assert.rejects(s.extensions.snapshot(), /改变|不可用/);
+        await assert.rejects(
+          s.extensions.call(item.id, { query: "fixture" }, { conversationId: conversation.id }, undefined, locks),
+          /未启用|不可用|校验/,
+        );
+      }
+    } finally {
+      await s.close();
+    }
+  });
+});
+test("valid Unicode extension text preserves its content and legacy approval hash", async () => {
+  const s = await setup();
+  try {
+    const approved = [];
+    for (const [index, content] of ["中文和 emoji 🧪", "真实替换字符 \uFFFD", "\uFEFF保留 BOM 与中文 🧪"].entries()) {
+      const id = "unicode-" + index;
+      const folder = await s.pack(id, "skill", content);
+      const contentHash = await legacyTextHash(folder, ["extension.json", "SKILL.md"]);
+      const item = await s.approve(id);
+      assert.equal(item.contentHash, contentHash, "valid text must retain its existing approval hash");
+      assert.equal(item.entry, content);
+      approved.push({ id: item.id, contentHash, content });
+    }
+    const snapshot = await s.extensions.snapshot();
+    for (const item of approved) {
+      assert.equal(snapshot.locks.find(lock => lock.id === item.id)?.contentHash, item.contentHash);
+      assert.equal(snapshot.skills.find(skill => skill.id === item.id)?.content, item.content);
+    }
   } finally {
     await s.close();
   }

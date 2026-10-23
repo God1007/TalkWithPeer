@@ -2,6 +2,7 @@ import { readdir, readFile, realpath, lstat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { randomUUID, createHash } from "node:crypto";
+import { isUtf8 } from "node:buffer";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
@@ -119,6 +120,8 @@ export class ExtensionRegistry {
           const bytes = await readFile(absolute);
           if (bytes.length > 64000 || bytes.includes(0))
             throw new Error("扩展文件超限或不是文本。");
+          if (!isUtf8(bytes))
+            throw new Error("扩展文件不是有效的 UTF-8 文本。");
           files.push({
             path: path.relative(folder, absolute),
             content: bytes.toString("utf8"),
