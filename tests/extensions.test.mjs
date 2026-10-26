@@ -6,6 +6,7 @@ import os from "node:os";
 import { Store } from "../server/store.mjs";
 import { ContextManager, hashInput } from "../server/context.mjs";
 import { ExtensionRegistry } from "../server/extensions.mjs";
+import { DiscussionEngine } from "../server/engine.mjs";
 import { createApp } from "../server/index.mjs";
 import { Terminal, connectLocal } from "../bin/twp.mjs";
 
@@ -593,6 +594,86 @@ test("symlinks, script files and task-rewriting hooks are never executable packa
   } finally {
     await s.close();
   }
+});
+test("stopping during the after_reply scan cannot publish a completed opinion without matching hooks", async () => {
+  const s = await setup(), ready = Promise.withResolvers(), release = Promise.withResolvers();
+  let engine, task, replied = false, held = false;
+  try {
+    const c = s.store.createConversation();
+    const member = s.store.addMember(c.id, { name: "Peer", providerId: "fixture", model: "model", parameters: {} });
+    const registry = {
+      validateMember() {},
+      closeMember() {},
+      driver: async () => ({ run: async () => {
+        replied = true;
+        return { model: "model", text: JSON.stringify({ message: "synthetic opinion", proposal: "synthetic proposal" }) };
+      } }),
+    };
+    engine = new DiscussionEngine(s.store, registry);
+    engine.extensions = s.extensions;
+    assert.equal((await s.extensions.snapshot()).locks.length, 0, "no hooks are enabled");
+    const scan = s.extensions.scan.bind(s.extensions);
+    s.extensions.scan = async () => {
+      const result = await scan();
+      if (replied && !held) {
+        held = true; // The first scan after the valid adapter reply belongs to after_reply.
+        ready.resolve();
+        await release.promise;
+      }
+      return result;
+    };
+    task = engine.start(c.id, "synthetic question", { maxRounds: 1 });
+    await Promise.race([ready.promise, task.then(() => { throw new Error("discussion finished before after_reply scan"); })]);
+    engine.stop(c.id);
+    release.resolve();
+    await task;
+    const messages = s.store.messages(c.id), requests = s.store.requests(c.id);
+    assert.equal(s.store.conversation(c.id).status, "paused");
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].status, "interrupted");
+    assert.equal(messages.find(m => m.author === member.id)?.status, "interrupted");
+    assert.ok(!messages.some(m => m.kind === "opinion" && m.status === "complete"));
+  } finally {
+    release.resolve();
+    await engine?.close();
+    await s.close();
+  }
+});
+test("after_tool scans preserve cancellation without matching hooks and still allow valid calls", async (t) => {
+  for (const cancelled of [true, false]) await t.test(cancelled ? "cancelled" : "not cancelled", async () => {
+    const s = await setup(), ready = Promise.withResolvers(), release = Promise.withResolvers();
+    let pending;
+    try {
+      const tool = await s.approve("search"), c = s.store.createConversation();
+      const source = s.store.addMessage(c.id, { author: "user", content: "synthetic fixture evidence" });
+      const locks = (await s.extensions.snapshot()).locks;
+      const scan = s.extensions.scan.bind(s.extensions);
+      let scans = 0;
+      s.extensions.scan = async () => {
+        const index = ++scans, result = await scan();
+        if (index === 3) { // find, before_tool, then after_tool; all use the real scan result.
+          ready.resolve();
+          await release.promise;
+        }
+        return result;
+      };
+      const control = new AbortController(), reason = new Error("synthetic tool cancellation");
+      pending = s.extensions.call(tool.id, { query: "fixture" }, { conversationId: c.id }, control.signal, locks);
+      await Promise.race([ready.promise, pending.then(() => { throw new Error("tool finished before after_tool scan"); })]);
+      if (cancelled) control.abort(reason);
+      release.resolve();
+      if (cancelled) await assert.rejects(pending, error => error === reason);
+      else assert.equal((await pending).result[0].sourceId, source.id);
+      const run = s.store.extensionRuns(c.id).find(r => r.type === "tool");
+      assert.equal(run.status, cancelled ? "interrupted" : "complete");
+      if (cancelled) assert.equal(run.resultHash, undefined);
+      else assert.ok(run.resultHash);
+    } finally {
+      release.resolve();
+      await pending?.catch(() => {});
+      await s.close();
+    }
+  });
 });
 test("shared runtime injects reviewed skills, runs hooks and bounds extension tool loop with audit", async () => {
   const s = await setup();

@@ -458,12 +458,12 @@ export class ExtensionRegistry {
   }
   async hooks(event, scope, signal, locks = null, toolId = null) {
     const { packages } = await this.scan();
+    if (signal?.aborted) throw signal.reason ?? new Error("执行已取消。");
     this.verifyLocks(packages, locks);
     for (const hook of packages.filter(
       (p) =>
         p.enabled && p.manifest.type === "hook" && p.definition.event === event,
     )) {
-      if (signal?.aborted) throw signal.reason ?? new Error("执行已取消。");
       if (
         locks &&
         !locks.some(
