@@ -153,6 +153,12 @@ export class ExtensionRegistry {
         throw new Error("归档源只允许用于只读资料包。");
       files.push(...(await referenceFiles(library, manifest.sources)));
     }
+    const paths = new Set();
+    for (const file of files) {
+      if (paths.has(file.path))
+        throw new Error("扩展文件路径重复：" + file.path);
+      paths.add(file.path);
+    }
     let definition = null,
       capability;
     if (manifest.type === "skill" || manifest.type === "reference") {
