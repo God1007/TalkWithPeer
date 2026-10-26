@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { createHash } from "node:crypto";
 import { Store } from "../server/store.mjs";
 import { ContextManager } from "../server/context.mjs";
 import { ExtensionRegistry } from "../server/extensions.mjs";
@@ -91,6 +92,116 @@ async function fixture() {
     },
   };
 }
+
+test("reference path collisions reject packages instead of shadowing archived files", async () => {
+  const s = await fixture();
+  try {
+    const folder = path.join(s.root, "references/archive/source/plugin");
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, "SKILL.md"), "Package-local shadow text.");
+    const scanned = await s.registry.scan();
+    assert.ok(
+      !scanned.packages.some((p) => p.manifest.id === "archive"),
+      "an ambiguous path must not become an approvable reference package",
+    );
+    assert.ok(
+      scanned.errors.some(
+        (e) =>
+          e.path === "references/archive" &&
+          /重复/.test(e.error) &&
+          e.error.includes("source/plugin/SKILL.md"),
+      ),
+      "the scan must identify the duplicate reference path",
+    );
+  } finally {
+    await s.close();
+  }
+});
+
+test("overlapping reference sources retain unique paths and read the correct archived bytes", async () => {
+  const s = await fixture();
+  try {
+    const content = "Synthetic archived document. 中文 🧪";
+    await writeFile(path.join(s.source, "SKILL.md"), content);
+    const folder = await s.pack("archive", "reference", "Review the archive.", {
+      sources: ["source/plugin", "source/plugin/SKILL.md"],
+    });
+    await mkdir(path.join(folder, "source"));
+    await writeFile(
+      path.join(folder, "source/local.md"),
+      "Distinct package-local document.",
+    );
+    const reader = await s.approve("reader"),
+      archive = await s.approve("archive");
+    assert.equal(
+      new Set(archive.files.map((f) => f.path)).size,
+      archive.files.length,
+    );
+    assert.equal(
+      archive.files.filter((f) => f.path === "source/plugin/SKILL.md").length,
+      1,
+    );
+    const snapshot = await s.registry.snapshot();
+    assert.ok(snapshot.locks.some((lock) => lock.id === archive.id));
+    assert.equal(
+      snapshot.references[0].files.filter(
+        (f) => f.path === "source/plugin/SKILL.md",
+      ).length,
+      1,
+    );
+    const conversation = s.store.createConversation();
+    const { result } = await s.registry.call(
+      reader.id,
+      { extensionId: archive.id, path: "source/plugin/SKILL.md" },
+      { conversationId: conversation.id },
+      undefined,
+      snapshot.locks,
+    );
+    assert.equal(result.content, content);
+    assert.equal(
+      result.fileHash,
+      createHash("sha256").update(Buffer.from(content)).digest("hex"),
+    );
+    assert.equal(result.contentHash, archive.contentHash);
+    assert.equal(result.partial, false);
+    assert.equal(result.nextOffset, null);
+  } finally {
+    await s.close();
+  }
+});
+
+test("reference path collisions invalidate existing locks and remain disableable", async () => {
+  const s = await fixture();
+  try {
+    const reader = await s.approve("reader"),
+      archive = await s.approve("archive");
+    const locks = (await s.registry.snapshot()).locks;
+    const folder = path.join(s.root, "references/archive/source/plugin");
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, "SKILL.md"), "Package-local shadow text.");
+    const unavailable = await s.registry.find(archive.id);
+    assert.equal(unavailable.status, "unavailable");
+    assert.equal(unavailable.enabled, false);
+    await assert.rejects(s.registry.snapshot(), /改变|不可用/);
+    const conversation = s.store.createConversation();
+    await assert.rejects(
+      s.registry.call(
+        reader.id,
+        { extensionId: archive.id, path: "source/plugin/SKILL.md" },
+        { conversationId: conversation.id },
+        undefined,
+        locks,
+      ),
+      /改变|不可用|未授权/,
+    );
+    await s.registry.enable(archive.id, false);
+    const snapshot = await s.registry.snapshot();
+    assert.ok(!snapshot.locks.some((lock) => lock.id === archive.id));
+    assert.ok(snapshot.locks.some((lock) => lock.id === reader.id));
+  } finally {
+    await s.close();
+  }
+});
 
 test("private plugin archives are review-only, redact credentials, preserve hash locks and paginate text reads", async () => {
   const s = await fixture();
