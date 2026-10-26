@@ -29,7 +29,7 @@ export default function ExtensionManager({ running, api }) {
     setBusy(true);
     setError(null);
     try {
-      await action();
+      await action?.();
       await refresh();
     } catch (e) {
       setError(e.message);
@@ -74,7 +74,7 @@ export default function ExtensionManager({ running, api }) {
           className="text-button"
           type="button"
           disabled={busy}
-          onClick={() => perform(refresh)}
+          onClick={() => perform()}
         >
           刷新文件与版本
         </button>
