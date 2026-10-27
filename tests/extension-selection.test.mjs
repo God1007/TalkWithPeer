@@ -26,6 +26,11 @@ function fixture() {
       }
     }];
   };
+  const useRef = (initial) => {
+    const index = cursor++;
+    if (!(index in slots)) slots[index] = { current: initial };
+    return slots[index];
+  };
   const changed = (previous, deps) => !previous || deps.some((value, index) => !Object.is(value, previous.deps[index]));
   const useCallback = (callback, deps) => {
     const index = cursor++;
@@ -56,8 +61,8 @@ function fixture() {
     list.push(pending);
     return pending.promise;
   };
-  const Component = new Function("React", "useState", "useEffect", "useCallback", code + "\nreturn ExtensionManager;")(
-    React, useState, useEffect, useCallback,
+  const Component = new Function("React", "useState", "useRef", "useEffect", "useCallback", code + "\nreturn ExtensionManager;")(
+    React, useState, useRef, useEffect, useCallback,
   );
   const render = () => {
     for (let attempts = 0; dirty; attempts++) {
@@ -146,6 +151,33 @@ function fixture() {
     cleanup: () => { for (const slot of slots) slot?.cleanup?.(); },
   };
 }
+
+for (const outcome of ["success", "failure"])
+  test(`a late initial extension catalog ${outcome} cannot replace a newer successful refresh`, async (t) => {
+    const s = fixture(); t.after(s.cleanup);
+    const initial = Promise.withResolvers();
+    s.catalogReplies.push(() => initial.promise);
+    await s.flush();
+    s.catalogReplies.push(() => Promise.resolve({
+      libraries: [], errors: [],
+      packages: s.packages.map((item) => ({
+        ...item, manifest: { ...item.manifest, version: "2.0.0" },
+        status: "reviewed", reviewed: true, enabled: true, activeLock: true,
+      })),
+    }));
+    const card = () => text(nodes(s.render()).find((node) => node.type === "article" && nodes(node).some((child) => child.type === "strong" && text(child) === "Package A")));
+    await s.refresh();
+    assert.equal(s.catalogReads.length, 2, "the initial load and manual refresh are separate catalog reads");
+    assert.match(card(), /v2\.0\.0/);
+    if (outcome === "success") initial.resolve({ libraries: [], packages: s.packages, errors: [] });
+    else initial.reject(new Error("obsolete initial catalog failure"));
+    await s.flush();
+    assert.match(card(), /v2\.0\.0/, "the late initial response must not restore an old version");
+    assert.match(card(), /已审查/, "the latest approval status remains visible");
+    assert.match(card(), /已启用/, "the latest enabled status remains visible");
+    assert.equal(s.alerts(), "", "an obsolete initial failure must not survive a newer successful refresh");
+    assert.equal(s.button("刷新文件与版本").props.disabled, false);
+  });
 
 test("manual extension catalog refresh performs one read and releases busy state", async (t) => {
   const s = fixture(); t.after(s.cleanup);
