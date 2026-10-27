@@ -13,7 +13,7 @@ const text = (node) => typeof node === "string" ? node : !node || typeof node !=
   (node.props?.children ?? []).flat(Infinity).map(text).join("");
 
 function fixture() {
-  const slots = [], reads = [], writes = [], eventErrors = [];
+  const slots = [], reads = [], writes = [], eventErrors = [], catalogReads = [], catalogReplies = [];
   let cursor = 0, dirty = true, tree, effects = [];
   const useState = (initial) => {
     const index = cursor++;
@@ -25,6 +25,11 @@ function fixture() {
         dirty = true;
       }
     }];
+  };
+  const useRef = (initial) => {
+    const index = cursor++;
+    if (!(index in slots)) slots[index] = { current: initial };
+    return slots[index];
   };
   const changed = (previous, deps) => !previous || deps.some((value, index) => !Object.is(value, previous.deps[index]));
   const useCallback = (callback, deps) => {
@@ -47,15 +52,17 @@ function fixture() {
     capability: "context.workflow", commit: "fixture", files: [{ path: "SKILL.md", content: name + " SOURCE" }],
   }));
   const api = (url, method = "GET", body) => {
-    if (url === "/extensions" && method === "GET")
-      return Promise.resolve({ libraries: [], packages, errors: [] });
+    if (url === "/extensions" && method === "GET") {
+      catalogReads.push({ url, method });
+      return catalogReplies.length ? catalogReplies.shift()() : Promise.resolve({ libraries: [], packages, errors: [] });
+    }
     const pending = { url, method, body, ...Promise.withResolvers(), settled: false };
     const list = method === "GET" ? reads : writes;
     list.push(pending);
     return pending.promise;
   };
-  const Component = new Function("React", "useState", "useEffect", "useCallback", code + "\nreturn ExtensionManager;")(
-    React, useState, useEffect, useCallback,
+  const Component = new Function("React", "useState", "useRef", "useEffect", "useCallback", code + "\nreturn ExtensionManager;")(
+    React, useState, useRef, useEffect, useCallback,
   );
   const render = () => {
     for (let attempts = 0; dirty; attempts++) {
@@ -117,7 +124,13 @@ function fixture() {
     return writes.at(-1);
   };
   return {
-    packages, reads, writes, flush, render, section, button, choose, close, readFor, reply, load, approve,
+    packages, reads, writes, catalogReads, catalogReplies, flush, render, section, button, choose, close, readFor, reply, load, approve,
+    refresh: async () => {
+      const control = button("刷新文件与版本");
+      assert.ok(control && !control.props.disabled, "the refresh control is available");
+      invoke(control.props.onClick);
+      await flush();
+    },
     setNote: async (value) => {
       const input = nodes(section()).find((node) => node.type === "input");
       assert.ok(input, "the loaded review has a note input");
@@ -138,6 +151,83 @@ function fixture() {
     cleanup: () => { for (const slot of slots) slot?.cleanup?.(); },
   };
 }
+
+for (const outcome of ["success", "failure"])
+  test(`a late initial extension catalog ${outcome} cannot replace a newer successful refresh`, async (t) => {
+    const s = fixture(); t.after(s.cleanup);
+    const initial = Promise.withResolvers();
+    s.catalogReplies.push(() => initial.promise);
+    await s.flush();
+    s.catalogReplies.push(() => Promise.resolve({
+      libraries: [], errors: [],
+      packages: s.packages.map((item) => ({
+        ...item, manifest: { ...item.manifest, version: "2.0.0" },
+        status: "reviewed", reviewed: true, enabled: true, activeLock: true,
+      })),
+    }));
+    const card = () => text(nodes(s.render()).find((node) => node.type === "article" && nodes(node).some((child) => child.type === "strong" && text(child) === "Package A")));
+    await s.refresh();
+    assert.equal(s.catalogReads.length, 2, "the initial load and manual refresh are separate catalog reads");
+    assert.match(card(), /v2\.0\.0/);
+    if (outcome === "success") initial.resolve({ libraries: [], packages: s.packages, errors: [] });
+    else initial.reject(new Error("obsolete initial catalog failure"));
+    await s.flush();
+    assert.match(card(), /v2\.0\.0/, "the late initial response must not restore an old version");
+    assert.match(card(), /已审查/, "the latest approval status remains visible");
+    assert.match(card(), /已启用/, "the latest enabled status remains visible");
+    assert.equal(s.alerts(), "", "an obsolete initial failure must not survive a newer successful refresh");
+    assert.equal(s.button("刷新文件与版本").props.disabled, false);
+  });
+
+test("manual extension catalog refresh performs one read and releases busy state", async (t) => {
+  const s = fixture(); t.after(s.cleanup);
+  await s.flush();
+  const before = s.catalogReads.length;
+  await s.refresh();
+  assert.equal(s.catalogReads.length - before, 1, "one refresh click must scan the catalog once");
+  assert.equal(s.alerts(), "");
+  assert.equal(s.button("刷新文件与版本").props.disabled, false);
+});
+
+test("manual extension catalog refresh does not report a redundant read failure", async (t) => {
+  const s = fixture(); t.after(s.cleanup);
+  await s.flush();
+  s.catalogReplies.push(
+    () => Promise.resolve({ libraries: [], packages: s.packages, errors: [] }),
+    () => Promise.reject(new Error("redundant catalog read failed")),
+  );
+  await s.refresh();
+  assert.equal(s.alerts(), "", "a successful refresh must not fail because it scans again");
+  assert.equal(s.button("刷新文件与版本").props.disabled, false);
+});
+
+test("manual extension catalog refresh shows a current failure and allows retry", async (t) => {
+  const s = fixture(); t.after(s.cleanup);
+  await s.flush();
+  const pending = Promise.withResolvers(), before = s.catalogReads.length;
+  s.catalogReplies.push(() => pending.promise);
+  await s.refresh();
+  assert.equal(s.button("刷新文件与版本").props.disabled, true, "a pending catalog read holds busy state");
+  pending.reject(new Error("current catalog read failed"));
+  await s.flush();
+  assert.equal(s.catalogReads.length - before, 1);
+  assert.match(s.alerts(), /current catalog read failed/);
+  assert.equal(s.button("刷新文件与版本").props.disabled, false, "a failed read must release busy state");
+  await s.refresh();
+  assert.equal(s.alerts(), "", "a later successful retry clears the current error");
+  assert.equal(s.button("刷新文件与版本").props.disabled, false);
+});
+
+test("approval still refreshes the extension catalog once after the action completes", async (t) => {
+  const s = fixture(); t.after(s.cleanup);
+  await s.flush(); await s.load("A");
+  const before = s.catalogReads.length, action = await s.approve();
+  assert.equal(s.catalogReads.length, before, "the catalog is not refreshed before approval finishes");
+  await s.finishAction(action);
+  assert.equal(s.catalogReads.length - before, 1, "approval retains its one catalog refresh");
+  assert.equal(s.alerts(), "");
+  assert.equal(s.button("刷新文件与版本").props.disabled, false);
+});
 
 test("switching extension reviews hides the old files and approval while the new package loads", async (t) => {
   const s = fixture(); t.after(s.cleanup);

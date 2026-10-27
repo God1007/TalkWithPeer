@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 export default function ExtensionManager({ running, api }) {
   const [data, setData] = useState(null),
     [directory, setDirectory] = useState(""),
@@ -10,11 +10,19 @@ export default function ExtensionManager({ running, api }) {
     [error, setError] = useState(null),
     [busy, setBusy] = useState(false);
   const [detailRevision, setDetailRevision] = useState(0);
+  const refreshVersion = useRef(0);
   const refresh = useCallback(async () => {
-    setData(await api("/extensions"));
+    const version = ++refreshVersion.current;
+    try {
+      const catalog = await api("/extensions");
+      if (version === refreshVersion.current) setData(catalog);
+    } catch (e) {
+      if (version === refreshVersion.current) throw e;
+    }
   }, [api]);
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
+    return () => { refreshVersion.current++; };
   }, [refresh]);
   useEffect(() => {
     let live = true;
@@ -29,7 +37,7 @@ export default function ExtensionManager({ running, api }) {
     setBusy(true);
     setError(null);
     try {
-      await action();
+      await action?.();
       await refresh();
     } catch (e) {
       setError(e.message);
@@ -74,7 +82,7 @@ export default function ExtensionManager({ running, api }) {
           className="text-button"
           type="button"
           disabled={busy}
-          onClick={() => perform(refresh)}
+          onClick={() => perform()}
         >
           刷新文件与版本
         </button>
