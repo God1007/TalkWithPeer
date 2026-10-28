@@ -10,6 +10,7 @@ import { DiscussionEngine } from "./engine.mjs";
 import { PetLibrary, listCodexPets } from "./pets.mjs";
 import { safeError } from "./native-adapters.mjs";
 import { ExtensionRegistry } from "./extensions.mjs";
+import { redactReference } from "./reference-files.mjs";
 
 const appRoot = fileURLToPath(new URL("../", import.meta.url));
 const publicRoot = path.join(appRoot, "dist");
@@ -343,7 +344,16 @@ export async function createApp({
           : null;
         json(res, 200, {
           extension: item,
-          previousFiles: previous?.files ?? [],
+          previousFiles: (previous?.files ?? []).map((file) => {
+            if (previous.manifest.type !== "reference" || file.encoding !== "utf8")
+              return file;
+            const sanitized = redactReference(file.content);
+            return {
+              ...file,
+              ...sanitized,
+              redacted: Boolean(file.redacted || sanitized.redacted),
+            };
+          }),
         });
         return;
       }

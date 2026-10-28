@@ -13,17 +13,21 @@ export function redactReference(text) {
   };
   try {
     const value = JSON.parse(text);
-    const walk = (object) => {
+    const walk = (object, sensitiveArray = false) => {
       if (!object || typeof object !== "object") return;
       for (const [key, value] of Object.entries(object)) {
         if (
-          secretKey.test(key) &&
+          (sensitiveArray || secretKey.test(key)) &&
           typeof value === "string" &&
           value &&
           !/^\$\{[^}]+\}$/.test(value)
         )
           object[key] = hide();
-        else walk(value);
+        else
+          walk(
+            value,
+            Array.isArray(value) && (sensitiveArray || secretKey.test(key)),
+          );
       }
     };
     walk(value);
