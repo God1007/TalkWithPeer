@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, symlink, rename } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { Store } from "../server/store.mjs";
@@ -70,6 +70,67 @@ async function setup() {
     },
   };
 }
+test("missing registered libraries report discovery errors through HTTP and CLI", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "twp-library-"));
+  const libraryRoot = path.join(root, "library"), moved = path.join(root, "moved");
+  const folder = path.join(libraryRoot, "tools/reader");
+  let app, connection, terminal;
+  try {
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, "extension.json"), JSON.stringify({
+      schemaVersion: 1, id: "reader", type: "tool", name: "Reader",
+      version: "1.0.0", description: "Synthetic fixture", entry: "definition.json",
+    }));
+    await writeFile(path.join(folder, "definition.json"), JSON.stringify({ operation: "public_read" }));
+    app = await createApp({
+      root: path.join(root, "data"),
+      registry: { list: () => [], refresh: async () => [], close() {}, closeMember() {} },
+    });
+    await new Promise(resolve => app.server.listen(0, "127.0.0.1", resolve));
+    connection = await connectLocal(app.server.address().port);
+    const output = [];
+    terminal = new Terminal(connection.request, line => output.push(line));
+    const { library } = await connection.request("/extensions/libraries", "POST", { path: libraryRoot });
+    const initial = await connection.request("/extensions");
+    assert.equal(initial.packages.length, 1);
+    assert.deepEqual(initial.errors, [], "missing optional classification directories are allowed");
+    await rename(libraryRoot, moved);
+    const missing = await connection.request("/extensions");
+    assert.deepEqual(missing.packages, []);
+    assert.equal(missing.errors.length, 1, "a missing registered library must not look like a valid empty catalog");
+    assert.equal(missing.errors[0].libraryId, library.id);
+    assert.equal(missing.errors[0].path, ".");
+    assert.match(missing.errors[0].error, /扩展库目录不可用/);
+    await terminal.execute("/ext list");
+    assert.ok(output.some(line => line.includes(missing.errors[0].error)));
+    await rename(moved, libraryRoot);
+    const item = initial.packages[0], url = "/extensions/" + encodeURIComponent(item.id);
+    await connection.request(url + "/review", "POST", { contentHash: item.contentHash });
+    await connection.request(url + "/enable", "POST", { enabled: true, contentHash: item.contentHash });
+    await rename(libraryRoot, moved);
+    const unavailable = await connection.request("/extensions");
+    assert.equal(unavailable.errors.length, 1);
+    assert.equal(unavailable.packages[0].status, "unavailable");
+    assert.equal(unavailable.packages[0].enabled, false);
+    assert.equal(unavailable.packages[0].activeLock, true);
+    await assert.rejects(app.extensions.snapshot(), /已改变/);
+    await writeFile(libraryRoot, "ordinary file replacing the registered directory");
+    const replaced = await connection.request("/extensions");
+    assert.equal(replaced.errors.length, 1, "a non-directory root has one library-level diagnostic");
+    assert.match(replaced.errors[0].error, /扩展库目录不可用/);
+    await rm(libraryRoot);
+    await rename(moved, libraryRoot);
+    const restored = await connection.request("/extensions");
+    assert.deepEqual(restored.errors, []);
+    assert.equal(restored.packages[0].enabled, true);
+    assert.equal(restored.packages[0].contentHash, item.contentHash);
+  } finally {
+    await terminal?.close();
+    await connection?.close();
+    await app?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test("configured platform data is denied by both project readers, including symlink aliases", async (t) => {
   const s = await setup();
   let app, connection, terminal;

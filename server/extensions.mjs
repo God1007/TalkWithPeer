@@ -223,6 +223,16 @@ export class ExtensionRegistry {
       packages = [],
       errors = [];
     for (const library of state.libraries) {
+      try {
+        if (!(await lstat(library.root)).isDirectory()) throw new Error();
+      } catch {
+        errors.push({
+          libraryId: library.id,
+          path: ".",
+          error: "扩展库目录不可用，请检查路径和访问权限：" + library.root,
+        });
+        continue;
+      }
       let commit = null;
       try {
         commit = (
