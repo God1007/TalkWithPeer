@@ -293,6 +293,10 @@ export class ExtensionRegistry {
         packages.push({
           ...cached,
           id,
+          libraryId: id.split(":")[0],
+          // Identical package contents can share a snapshot across libraries.
+          packagePath:
+            review.packagePath ?? (cached.id === id ? cached.packagePath : null),
           files: [],
           entry: "",
           definition: null,
@@ -332,6 +336,7 @@ export class ExtensionRegistry {
       contentHash,
       version: item.manifest.version,
       commit: item.commit,
+      packagePath: item.packagePath,
       note,
       reviewedAt: new Date().toISOString(),
     };
