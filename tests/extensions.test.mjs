@@ -505,6 +505,64 @@ test("project chunks preserve legacy reads, bound text ranges and reject changed
     await s.close();
   }
 });
+test("manifest scalar IDs and versions reject array aliases before review", async (t) => {
+  const s = await setup();
+  try {
+    const original = (await s.extensions.scan()).packages.find(p => p.manifest.id === "reader");
+    const source = original.files.find(f => f.path === "extension.json").content;
+    const filename = path.join(s.root, "tools/reader/extension.json");
+    for (const field of ["id", "version"])
+      await t.test(field, async () => {
+        try {
+          const manifest = JSON.parse(source);
+          manifest[field] = [manifest[field]];
+          await writeFile(filename, JSON.stringify(manifest));
+          const scanned = await s.extensions.scan();
+          assert.ok(!scanned.packages.some(p => p.id === original.id), "array aliases must not enter the reviewable catalog");
+          assert.ok(scanned.errors.some(e => e.path === "tools/reader" && /extension.json.*无效/.test(e.error)));
+          await assert.rejects(s.extensions.review(original.id, { contentHash: original.contentHash }), /不存在|校验失败/);
+        } finally {
+          await writeFile(filename, source);
+        }
+      });
+    const valid = await s.extensions.find(original.id);
+    assert.equal(valid.manifest.id, "reader");
+    assert.equal(valid.manifest.version, "1.0.0");
+    assert.equal(valid.contentHash, original.contentHash);
+    await s.extensions.review(valid.id, { contentHash: valid.contentHash });
+    await s.extensions.enable(valid.id, true, valid.contentHash);
+    assert.ok((await s.extensions.snapshot()).tools.some(p => p.id === valid.id));
+  } finally {
+    await s.close();
+  }
+});
+test("legacy manifest scalar approvals become unavailable and can be disabled", async () => {
+  const s = await setup();
+  try {
+    const original = (await s.extensions.scan()).packages.find(p => p.manifest.id === "reader");
+    const manifest = JSON.parse(original.files.find(f => f.path === "extension.json").content);
+    manifest.version = ["1.0.0"];
+    const legacyHash = "a".repeat(64);
+    // Synthetic persisted approval from before scalar validation was enforced.
+    s.store.saveSetting("extension-snapshot:" + legacyHash, { ...original, manifest, contentHash: legacyHash });
+    const legacy = s.extensions.state();
+    legacy.reviews[original.id] = { contentHash: legacyHash, version: manifest.version, commit: null, note: "legacy fixture" };
+    legacy.enabled[original.id] = legacyHash;
+    s.extensions.save(legacy);
+    await writeFile(path.join(s.root, "tools/reader/extension.json"), JSON.stringify(manifest));
+    const unavailable = await s.extensions.find(original.id);
+    assert.equal(unavailable.status, "unavailable");
+    assert.equal(unavailable.contentHash, null);
+    assert.equal(unavailable.enabled, false);
+    assert.equal(unavailable.activeLock, true);
+    await assert.rejects(s.extensions.snapshot(), /已改变|不可用/);
+    await s.extensions.enable(original.id, false);
+    assert.equal((await s.extensions.snapshot()).locks.length, 0);
+    assert.equal(s.extensions.state().reviews[original.id].contentHash, legacyHash);
+  } finally {
+    await s.close();
+  }
+});
 test("tool operations reject inherited names and non-string aliases", async (t) => {
   const s = await setup();
   try {
