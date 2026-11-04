@@ -135,14 +135,16 @@ export class ExtensionRegistry {
     if (
       !manifest ||
       manifest.schemaVersion !== 1 ||
-      !/^[a-z][a-z0-9-]{0,63}$/.test(manifest.id ?? "") ||
+      typeof manifest.id !== "string" ||
+      !/^[a-z][a-z0-9-]{0,63}$/.test(manifest.id) ||
       !["skill", "tool", "hook", "reference"].includes(manifest.type) ||
       typeof manifest.name !== "string" ||
       !manifest.name.trim() ||
       manifest.name.length > 80 ||
       typeof manifest.description !== "string" ||
       manifest.description.length > 600 ||
-      !/^\d+\.\d+\.\d+$/.test(manifest.version ?? "") ||
+      typeof manifest.version !== "string" ||
+      !/^\d+\.\d+\.\d+$/.test(manifest.version) ||
       typeof manifest.entry !== "string"
     )
       throw new Error("extension.json 格式无效。");
